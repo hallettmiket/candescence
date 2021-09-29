@@ -1,4 +1,4 @@
-name: deepmicroscopy
+name: candescence
 channels:
   - pytorch
   - conda-forge

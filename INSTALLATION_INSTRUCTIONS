@@ -3,7 +3,7 @@ You will need to download and install MMDETECTION. You will also need Python and
 Then, to setup the python environment to run python scripts and notebooks in this repository run:
 `conda env create -f environment.yml`
 
-Activate the new environment with the command `conda activate deepmicroscopy`
+Activate the new environment with the command `conda activate candescence`
 
 Finally run `pip install -v -e $TOOL_BIN/mmdetection`
 
