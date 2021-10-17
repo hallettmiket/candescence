@@ -4,11 +4,11 @@ import os
 import sys
 
 exp = "1" # experiment number
-gpu = "5"
-lr = "0.01"
+gpu = "9"
+lr = "0.001"
 momentum = "0.9"
 decay = "0.001"
-total_epochs=1000
+total_epochs=3000
 freeze = 0 
 load=True
 pretrained=False

@@ -27,7 +27,7 @@ test_pipeline = [
             dict(type='Collect', keys=['img']),
         ])
 ]
-klasses=(0,1,2,3,4,5,6,7,8))
+klasses=(0,1,2,3,4,5,6,7,8)
 data = dict(
     samples_per_gpu=1,
     workers_per_gpu=1,

@@ -1,8 +1,8 @@
 options(warn = -1)
 root <- rprojroot::find_root(".git/index"); source(file.path(root, "src", "grace", "init.R"))
 
-numba = "results_2"
-exp = "2" 
+numba = "results_blue_freezie"   # this was our best one
+exp = "blue_freezie" 
 target = "train"   # can be {val | train}
 threshold = 0.3   #  , 0.3, 0.33, 0.35, 0.4, 0.5, 0.6]
 

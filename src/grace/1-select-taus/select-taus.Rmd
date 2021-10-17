@@ -1,0 +1,185 @@
+---
+title: "Select threshold (taus) for both the grace TC and Macrophage FCOS classifiers"
+output: html_notebook
+---
+
+```{r setup, include=FALSE, results='hide'}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn = -1)
+root <- rprojroot::find_root(".git/index"); 
+source(file.path(root, "src", "grace", "init.R"))
+```
+
+```{r, include=FALSE, results='hide'}
+tc <-list()
+tc['numba'] = "results_blue_freezie"   # this was our best one
+tc['exp'] = "blue_freezie" 
+tc[['target']] = c("train", "val")   
+tc[['thresholds']] = seq(0.1, 0.6, by=0.1)
+
+tc['PARENT_RAW_OUTPUT']=  file.path(CANDESCENCE, "output/grace_tc")
+tc['SAVE_RESULTS']=       file.path(CANDESCENCE, "performance/grace_tc")
+tc[['IMAGE_PATH']]=         file.path(CANDESCENCE, "train-data/gracetc", tc[['target']])
+tc[['DATASET']]=            file.path(CANDESCENCE, "train-data/gracetc", tc[['target']])
+
+macro<-list()
+macro['numba'] = "results_slow_lax"   # this was our best one
+macro['exp'] = "slow_lax" 
+macro[['target']] = c("train", "val")   
+macro[['thresholds']] = seq(0.2, 0.6, by=0.1)
+
+macro['PARENT_RAW_OUTPUT']=  file.path(CANDESCENCE, "output/grace_macro")
+macro['SAVE_RESULTS']=       file.path(CANDESCENCE, "performance/grace_macro")
+macro[['IMAGE_PATH']]=         file.path(CANDESCENCE, "train-data/grace_macro", tc[['target']])
+macro[['DATASET']]=            file.path(CANDESCENCE, "train-data/grace_macro", tc[['target']])
+```
+
+Now we read in all of the event files for training and validation datasets across all thresholds for both the TC and macrophage data. We use this tibble of all ${\tt events}$ to determine the best threshold $\tau_{tc}$ and $\tau_{macro}$, based on various summary statistics presented below. We note that the event csv files are produced by the scripts entitled ${\tt generate_train_val_events.py}$ in the ${\tt performance_x}$ directories where $x$ is either ${\tt tc}$ or ${\tt macro}$ (that is, they need to be run before executing this notebook).
+
+```{r echo=FALSE}
+
+for (i in 1:length(tc[['thresholds']])) {
+    for (j in 1:length(tc[['target']])) {
+       code_name <- paste0("all_events_results_", tc['exp'], "_type_", 
+                        tc[['target']][j], "_thresh_", tc[['thresholds']][i], ".csv")
+        if ((i==1) && (j==1)) {
+            events_ <- read_csv( file.path(tc['SAVE_RESULTS'], code_name) ) 
+            events_ <- events_[,-1]
+        } else {
+            tmp <- read_csv( file.path(tc['SAVE_RESULTS'], code_name) )
+            tmp <- tmp[,-1]
+            events_ <- events_ %>% add_row( tmp )
+        }
+    }
+}
+
+
+for (i in 1:length(macro[['thresholds']])) {
+    for (j in 1:length(macro[['target']])) {
+        code_name <- paste0("all_events_results_", macro['exp'], "_type_", 
+                        macro[['target']][j], "_thresh_", macro[['thresholds']][i], ".csv")
+        tmp <- read_csv( file.path(macro['SAVE_RESULTS'], code_name) )
+        tmp <- tmp[,-1]
+        events_ <- events_ %>% add_row( tmp )
+    }
+}
+events_ <- events_ %>% rename(target=type)
+events <- events_
+print(events_)
+```
+
+For convenience later on, we need to extract infromation from the filename (plate, replicate etc.).
+
+```{r echo=FALSE}
+tmp <- str_split(events$filename, pattern="/", simplify=TRUE)[,9]
+tmp_<- str_split(tmp, pattern="_", simplify=TRUE)
+
+for (i in 1:nrow(tmp_)) {
+  if (tmp_[i,1]=="TC") { tmp_[i, 2:6 ] <- tmp_[i, 3:7]; tmp_[i, 7]<- "" }
+}
+
+events$type<-ifelse(tmp_[,1]=="both", "macro", tmp_[,1])
+events$replicate<-as.integer(str_split(tmp_[,2], pattern="[A-Z]+", simplify=TRUE)[,2])
+events$plate <- as.integer(str_split(tmp_[,3], pattern="[A-Z]+", simplify=TRUE)[,2])
+events$position<-tmp_[,4]
+events <- events %>% separate( col=position, into=c("row", "column"), sep=1 )
+
+events <- events %>% relocate(event, experiment, target, type, threshold, gt_class, dt_class, 
+                             plate, row, column,replicate, bbox_1, bbox_2, bbox_3, bbox_4)
+
+```
+
+
+We had several nuisance classes during the learning phase of each classifier that we are not interested in.
+```{r, results="hide"}
+print(events %>% filter(experiment==tc['exp']) %>% .[['gt_class']] %>% unique)
+tc[['important']] <- c("c0", "c1", "c2", "c3")
+print(events %>% filter(experiment==macro['exp']) %>% .[['gt_class']] %>% unique)
+macro[['important']] <- c("0", "1", "2", "3", "macrophage")
+```
+
+
+
+In order to get a more insightful glimpse of the performance of our classifiers, we remove these nuissance classes from subsequent analyses. We keep only observations where at least the ground truth or the prediction is a not a nuissance class; we refer to these as important classes. The obervation is a halluciantion if the ground truth is a nuisance class (or NA) but the prediction is important. The observation is a misclassificaiton is the prediction is important but the ground truth is a nuisance class, or if the prediction is a nuissance category but the ground truth is important.
+    
+```{r, results="hide"}
+important <- events %>% filter( (experiment==tc[['exp']] & 
+                                (gt_class %in% tc[['important']] |  dt_class %in% tc[['important']] )) |
+                                (experiment==macro[['exp']] & 
+                                ( gt_class %in% macro[['important']] | dt_class %in% macro[['important']] )))
+
+important$gt_class <- ifelse(important$experiment==tc[['exp']], 
+        ifelse((!(important$gt_class %in% tc[['important']]) & !is.na(important$gt_class)), "nuissance", important$gt_class),
+        ifelse((!(important$gt_class %in% macro[['important']]) & !is.na(important$gt_class)), "nuissance", important$gt_class))
+important$dt_class <- ifelse(important$experiment==tc[['exp']], 
+        ifelse((!(important$dt_class %in% tc[['important']]) & !is.na(important$dt_class)), "nuissance", important$dt_class),
+        ifelse((!(important$dt_class %in% macro[['important']] & !is.na(important$dt_class))), "nuissance", important$dt_class))
+important$event <- ifelse(important$experiment==tc[['exp']], 
+        ifelse(important$dt_class %in% tc[['important']] & !is.na(important$gt_class) & important$gt_class=="nuissance", "hallucination", important$event),
+        ifelse(important$dt_class %in% macro[['important']] & !is.na(important$gt_class) & important$gt_class=="nuissance", "hallucination", important$event))
+
+tc['important_events'] <- important %>% filter(experiment==tc[['exp']])
+macro['important_events']  <- important %>% filter(experiment==macro[['exp']])
+print(important)
+```
+
+
+```{r, results="hide"}
+stats <- important %>% group_by(experiment,  target, threshold, event) %>% summarise(n=n()) 
+print(stats, n=Inf)
+```
+
+From this tibble, we compute summary statistics that compare the performance of the two clasifiers, with focus on the validation dataset.
+
+```{r, results="hide"}
+sum_stats <- tibble( experiment=character(), threshold=double(), target=character(), 
+                     class_good=double(), blindspot=double(), hallucination=double(), 
+                     class_error=double(), 
+                     TPs=double(), FNs=double(), FPs=double(), N_tot=double() )
+for (e in unique(stats$experiment)) {
+  for (t in unique(stats$threshold)) {
+    for (ty in unique(stats$target)) {
+      class_good <- stats %>% filter(experiment==e, threshold==t, target==ty, event=="class_good") %>% .[["n"]] %>%
+                max(., 0)
+      blindspot <- stats %>% filter(experiment==e, threshold==t, target==ty, event=="blindspot") %>% .[["n"]] %>%
+                max(., 0)
+      hallucination <- stats %>% filter(experiment==e, threshold==t, target==ty, event=="hallucination") %>% .[["n"]] %>% 
+                max(., 0)
+      class_error <- stats %>% filter(experiment==e, threshold==t, target==ty, event=="class_error") %>% .[["n"]] %>% 
+                max(., 0)
+      TPs <- class_good
+      FNs <- blindspot
+      FPs <- hallucination + class_error
+      N_tot <- class_good + blindspot + class_error
+     
+      sum_stats <- sum_stats %>% add_row( experiment=e, threshold=t, target=ty, 
+                                           class_good = class_good, blindspot=blindspot, hallucination=hallucination,
+                                           class_error = class_error, 
+                                           TPs=TPs, FNs=FNs, FPs=FPs, N_tot=N_tot)
+    }
+  }
+}  
+
+sum_stats <- sum_stats %>% mutate( blind_rate=blindspot/N_tot) %>% arrange(experiment, target, threshold)
+sum_stats <- sum_stats %>% mutate( hallucination_rate=hallucination/N_tot) %>% arrange(experiment, target, threshold)
+sum_stats <- sum_stats %>% mutate( classification_rate=class_good/(class_good + class_error)) %>% arrange(experiment, target, threshold)
+sum_stats <- sum_stats %>% mutate( sensitivity= TPs / (TPs + FNs)) %>% arrange(experiment, target, threshold)
+sum_stats <- sum_stats %>% mutate( precision= TPs / (TPs + FPs)) %>% arrange(experiment, target, threshold)
+sum_stats <- sum_stats %>% mutate( f1= 2*TPs / (2*TPs + FPs + FNs)) %>% arrange(experiment, target, threshold)
+
+print(sum_stats, width=Inf, n=Inf)
+```
+If we look at thresholds for $\tau_{tc}$ and $\tau_{macro}$ that maximize the $F1$, we can see that the training performances for both predictors are excellent, in the high nineties. However, this drops off sharply in the validation datasets for both predictor, although the Macrophage classifier is slightly better at just below $70\%$. The TC predictor is not sufficient at $\tild 50\%$. The classification performance remains very good however at near perfect values. It is the blindspot and hallucination rate that rises dramatically.  
+
+However, for the sake of developing code while we wait for the extended learning set to be finished, we'll choose $\tau= 0.3$ in both cases.
+
+$\tau_{tc}=\tau_{macro}=0.3$
+```{r, results="hide"}
+tc['opt_threshold']<-0.3; macro['opt_threshold'] <- 0.3
+sum_stats %>% filter(experiment=="blue_freezie", threshold==tc['opt_threshold']) %>% print(width=Inf)
+sum_stats %>% filter(experiment=="slow_lax", threshold==tc['opt_threshold']) %>% print(width=Inf)
+
+saveRDS(tc, file=file.path(tc['SAVE_RESULTS'], "optimal_classifier.rds"))
+saveRDS(macro, file=file.path(macro['SAVE_RESULTS'], "optimal_classifier.rds"))
+```
+

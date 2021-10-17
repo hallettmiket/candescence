@@ -6,8 +6,8 @@ import numpy as np
 # orig = pd.read_pickle("/home/data/refined/candescence/train-data/final/train_white.pkl")
 # o=orig[0]
 
-train=pd.read_pickle("/home/data/refined/candescence/train-data/gracetc/train_gracetc.pkl")
-val=pd.read_pickle("/home/data/refined/candescence/train-data/gracetc/val_gracetc.pkl")
+train=pd.read_pickle("/home/data/refined/candescence/train-data/grace_macro/train_grace_macro.pkl")
+val=pd.read_pickle("/home/data/refined/candescence/train-data/grace_macro/val_grace_macro.pkl")
 
 for i in range(0,len(train)):
   tmp=np.zeros( (len(train[i]['ann']['bboxes']), 4), dtype='float32')
@@ -24,5 +24,5 @@ for i in range(0,len(val)):
 
 
 import pickle
-pickle.dump(train, open("/home/data/refined/candescence/train-data/gracetc/train_gracetc.pkl", "wb"))  # save it into a file named save.p
-pickle.dump(val, open("/home/data/refined/candescence/train-data/gracetc/val_gracetc.pkl", "wb"))  # save it into a file named save.p
+pickle.dump(train, open("/home/data/refined/candescence/train-data/grace_macro/train_grace_macro.pkl", "wb"))  # save it into a file named save.p
+pickle.dump(val, open("/home/data/refined/candescence/train-data/grace_macro/val_grace_macro.pkl", "wb"))  # save it into a file named save.p

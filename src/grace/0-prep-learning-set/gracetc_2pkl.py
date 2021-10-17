@@ -24,5 +24,5 @@ for i in range(0,len(val)):
 
 
 import pickle
-pickle.dump(train, open("/home/data/refined/candescence/train-data/grace_macro/train_grace_macro.pkl", "wb"))  # save it into a file named save.p
-pickle.dump(val, open("/home/data/refined/candescence/train-data/grace_macro/val_grace_macro.pkl", "wb"))  # save it into a file named save.p
+pickle.dump(train, open("/home/data/refined/candescence/train-data/grace_tc/train_gracetc.pkl", "wb"))  # save it into a file named save.p
+pickle.dump(val, open("/home/data/refined/candescence/train-data/grace_tc/val_gracetc.pkl", "wb"))  # save it into a file named save.p

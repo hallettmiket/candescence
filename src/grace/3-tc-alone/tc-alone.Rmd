@@ -1,0 +1,269 @@
+---
+title: "Explore the TC FCOS classifier"
+output: html_notebook
+---
+
+```{r setup, include=FALSE, results='hide'}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn = -1)
+root <- rprojroot::find_root(".git/index"); 
+source(file.path(root, "src", "grace", "init.R"))
+```
+
+We begin by loading the metadata associated with the optimal clasifier as determined in experiment 1.
+
+```{r}
+tc <- readRDS(tc, file=file.path(CANDESCENCE, "performance/grace_tc", "optimal_classifier.rds"))
+```
+
+Now that we have chosen our best classifiers, we are ready to load the events associated with the test data.
+The following chunk of code assumes that ${\tt generate\_test\_objects.py}$ has already been run.
+
+```{r, results="hide"}
+test_events <- read_csv(file.path(tc['SAVE_RESULTS'],  
+                                  paste0("test_events_", 
+                                  tc['numba'], "_thresh_", tc['opt_threshold'], ".csv")))
+te <- test_events
+
+tmp_<- str_split(te$filename, pattern="_", simplify=TRUE)
+
+for (i in 1:nrow(tmp_)) {
+  if (tmp_[i,1]=="TC") { tmp_[i, 2:6 ] <- tmp_[i, 3:7]; tmp_[i, 7]<- "" }
+}
+
+te$type<-ifelse(tmp_[,1]=="both", "tc", tmp_[,1])
+te$replicate<-as.integer(str_split(tmp_[,2], pattern="[A-Z]+", simplify=TRUE)[,2])
+te$plate <- as.integer(str_split(tmp_[,3], pattern="[A-Z]+", simplify=TRUE)[,2])
+te$position<-tmp_[,4]
+te <- te %>% separate( col=position, into=c("row", "column"), sep=1 )
+
+te <- te %>% relocate(event, experiment, type, threshold, gt_class, dt_class, 
+                             plate, row, column,replicate, bbox_1, bbox_2, bbox_3, bbox_4)
+
+te <- te %>% mutate( area = (bbox_3 - bbox_1)*(bbox_4 - bbox_2))
+print(te)
+write_csv(te, file.path(tc['SAVE_RESULTS'],  
+                                  paste0("refined_test_events_", 
+                                  tc['numba'], "_thresh_", tc['opt_threshold'], ".csv")))
+filename2prcr <- te %>% select(filename, plate, row, column, replicate) %>% distinct
+```
+
+We asked what the distribution of sizes is for each of the classes across all immages. 
+For the important classes, there are  significnt differences overall. 
+Specifically there is a slight increase in the avearge size with filementation.
+
+```{r}
+szs <- te %>% group_by(dt_class) %>% summarise(A_mean = mean(area), A_med=median(area), A_min=min(area), A_max=max(area))
+print(szs)
+```
+
+```{r}
+ggplot(te %>% filter(dt_class %in% tc$important), aes(x=area, color=dt_class, fill=dt_class)) +
+geom_histogram(aes(y=..density..), position="identity", alpha=0.5)+
+geom_density(alpha=0.6)+
+#scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+#scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+labs(title="Area histogram",x="Area", y = "Density")+
+theme_classic()
+```
+
+We next build summaries of each individual image. For this we will only consider the so-called
+``important'' classes.
+
+```{r}
+te <- te %>% ungroup
+img_summary <- te %>% filter(dt_class %in% tc$important) %>%
+  group_by(filename, dt_class) %>% 
+  dplyr::summarise( n=n(), A_mean = mean(area), A_med=median(area), A_min=min(area), A_max=max(area))
+img_summary <- img_summary %>% ungroup %>% group_by(filename) %>%
+    mutate(total = sum(n))
+img_summary<- img_summary %>% mutate(freq=n/total)
+img_summary <- img_summary %>% relocate(filename, dt_class, freq )
+print(img_summary)
+```
+To get a visualization of the differences, we will use some clustering methods designed specifically for CoDa data.
+
+```{r}
+library(robCompositions) # for the aitchion distance fnc aDist
+freqs <- img_summary %>% 
+            ungroup %>% select(filename, dt_class, n) %>% group_by(filename) %>%
+            pivot_wider(names_from=dt_class, values_from=n)
+for (i in 2:6) {
+  freqs[,i] <- freqs[,i] + 1 # add a peudocount to avoid 0s
+  freqs[is.na(freqs[,i]),i] <- 1
+}
+freqs <- freqs %>% mutate( tot = `0`+`1`+`2`+`3`+tc) %>%
+    mutate(f0=`0`/tot, f1=`1`/tot, f2=`2`/tot, f3=`3`/tot, ftc=tc/tot) %>%
+    select(filename, f0:ftc)
+M <- as.matrix(freqs[, c('f0', 'f1', 'f2', 'f3', 'ftc')])
+D <- aDist(M); C <- hclust(D); plot(C)
+```
+
+Two dimensional k-means clustering represents an alternative view. We re-use the matrix $M$ from above.
+
+```{r}
+km <- kmeans(M, 6) 
+#dp = discrproj(data, km$clustering)
+library(fpc)
+plotcluster(M, km$cluster)      #from library(fpc)
+
+```
+
+We also explore using principal component analysis (PCA).
+```{r}
+library(ggbiplot)
+TT <- as.matrix(tmp[2:ncol(tmp)])
+rownames(TT)<-pull(tmp, filename)
+tmp.pca <- prcomp(TT, center = TRUE,scale. = TRUE)
+ggbiplot(tmp.pca, labels=rownames(TT), labels.size=2)
+```
+We ask if there is greater concordance (measured with the Aitkinson distance) between replicates than between non-replicates.
+
+```{r}
+rand_samples <- 10
+
+reps <- freqs %>% inner_join(filename2prcr, by="filename") %>% 
+  group_by(plate, row, column) %>% dplyr::mutate(n=n()) %>% filter(n>1)
+reps <- reps %>% ungroup %>% group_by(plate, row, column, replicate)
+rep1 <- reps[1:(nrow(reps)/2),]; rep2 <- reps[((nrow(reps)/2)+1):nrow(reps),]
+reps1 <- as.matrix(rep1[2:6]); rownames(reps1) <- pull(rep1, filename)
+reps2 <- as.matrix(rep2[2:6]); rownames(reps2) <- pull(rep2, filename)
+positive_reps <- unlist(lapply( 1:nrow(reps1), FUN=function(i) aDist(reps1[i,], reps2[i,]) ))
+negative_reps <- c()
+for (i in 1:nrow(reps1)) {
+  if (rand_samples > (nrow(reps1)-1)) { 
+    idx <- setdiff(1:nrow(reps1), i) 
+  } else {
+    idx <- sample( setdiff(1:nrow(reps1), i), size = rand_samples) 
+  }
+  negative_reps <- c(negative_reps, 
+                       unlist(lapply( idx, FUN=function(j) aDist(reps1[i,], reps2[j,]) )))
+}
+
+tib <- tibble(matched=c(rep("positive", times=length(positive_reps)), 
+                       rep("negative", times=length(negative_reps))), 
+              adist = c(positive_reps, negative_reps) )
+
+ggplot(tib, aes(x=adist, color=matched, fill=matched)) +
+  geom_histogram(aes(y=..density..), position="identity", alpha=0.5)+
+  geom_density(alpha=0.6)
+```
+
+
+We next look at the distribution of the number of events (restricted to ``important'' events) across the images. Our first analysis considers all import event together.
+
+```{r}
+sum_summary <- img_summary %>% ungroup %>% group_by(filename) %>%  dplyr::summarize(tot=sum(n))
+hist(sum_summary$tot)
+
+h <- img_summary %>% ungroup 
+ggplot(h, aes(x=n, color=dt_class, fill=dt_class)) +
+geom_histogram(aes(y=..density..), position="identity", alpha=0.5)+
+geom_density(alpha=0.6)+
+#scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+#scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+labs(title="Count histogram",x="Count", y = "Density")+
+theme_classic()
+```
+
+
+We explore several ``top 10'' lists. First, we look at the highet and lowest relative frequencies
+per class.
+
+```{r}
+top_freqs <- freqs %>% 
+   inner_join(filename2prcr, by="filename") %>%
+   relocate(plate, row, column, replicate, f0, f1, f2, f3, ftc)
+
+top_freqs <- top_freqs %>% left_join(grace, 
+                  by=c("plate"="plate", "row"="row", "column"="column"))
+
+klasses <- c('f0', 'f1', 'f2', 'f3', 'ftc')
+
+twibble <- tibble(klass=character(), direction=character(),
+                  common=character(), 
+                  feature_name=character(),
+                  description=character(), 
+                  statistic=numeric(), filename=character() )
+
+for (i in 1:5) {
+  tmp <-  top_freqs %>% arrange(.[,klasses[i]]) %>%
+    select(common, feature_name, description, klasses[i], filename) %>% 
+    relocate(common, feature_name, description, klasses[i]) %>%
+    dplyr::rename(statistic=klasses[i]) %>% 
+    head(n=10) 
+  tmp$klass <- klasses[i]
+  tmp$direction <- "low"
+  twibble <- add_row(twibble, tmp)
+
+  tmp <-  top_freqs %>% arrange(.[,klasses[i]]) %>%
+    select(common, feature_name, description, klasses[i], filename) %>% 
+    relocate(common, feature_name, description, klasses[i]) %>%
+    dplyr::rename(statistic=klasses[i]) %>% 
+    tail(n=10) 
+  tmp$klass <- klasses[i]
+  tmp$direction <- "high"
+  twibble <- add_row(twibble, tmp)
+}
+print(twibble, n=Inf)
+```
+
+
+Now we explore GRACE members with the highest and lowest number of total cells.
+```{r}
+top_ones <- sum_summary %>% arrange(tot) %>% 
+   inner_join(filename2prcr, by="filename") %>%
+   relocate(plate, row, column, replicate, tot)
+
+info <- top_ones %>% left_join(grace, 
+                  by=c("plate"="plate", "row"="row", "column"="column"))
+
+  tmp <-  info %>% arrange(tot) %>%
+    select(common, feature_name, description, tot, filename) %>% 
+    relocate(common, feature_name, description, tot) %>%
+    dplyr::rename(statistic=tot) %>% 
+    head(n=10) 
+  tmp$klass <- "global"
+  tmp$direction <- "low"
+  twibble <- add_row(twibble, tmp)
+
+  
+  tmp <-  info %>% arrange(tot) %>%
+    select(common, feature_name, description, tot, filename) %>% 
+    relocate(common, feature_name, description, tot) %>%
+    dplyr::rename(statistic=tot) %>% 
+    tail(n=10) 
+  tmp$klass <- "global"
+  tmp$direction <- "high"
+  twibble <- add_row(twibble, tmp)
+
+```
+
+We then examine the outliers with respect to mean area size for each class.
+
+```{r}
+top_ones <- img_summary %>% arrange(A_mean) %>% 
+   inner_join(filename2prcr, by="filename") %>%
+   relocate(plate, row, column, replicate, A_mean)
+
+info <- top_ones %>% left_join(grace, 
+                  by=c("plate"="plate", "row"="row", "column"="column"))
+
+  tmp <-  info %>% arrange(A_mean) %>%
+    select(dt_class, common, feature_name, description,  A_mean, filename) %>% 
+    relocate( dt_class, common, feature_name, description, A_mean) %>%
+    dplyr::rename(statistic=A_mean, klass=dt_class) %>% 
+    head(n=30) 
+  tmp$direction <- "low"
+  tmp$klass <- paste0("area_", tmp$klass)
+  twibble <- add_row(twibble, tmp)
+  
+   tmp <-  info %>% arrange(A_mean) %>%
+    select(dt_class, common, feature_name, description,  A_mean, filename) %>% 
+    relocate( dt_class, common, feature_name, description, A_mean) %>%
+    dplyr::rename(statistic=A_mean, klass=dt_class) %>% 
+    tail(n=30) 
+  tmp$direction <- "high"
+  tmp$klass <- paste0("area_", tmp$klass)
+  twibble <- add_row(twibble, tmp)
+```

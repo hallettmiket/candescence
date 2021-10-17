@@ -11,8 +11,9 @@ import pickle
 import numpy as np
 from utils import*
 
-num_classes=7
-class_to_number = {"c0": 0, "c1": 1, "c2": 2, "time":3,"unknown": 4, "artifact": 5, "c3":6}
+num_classes=9
+class_to_number = {"0": 0, "1": 1, "2": 2, "time":3,"unknown": 4, "artifact": 5, 
+            "3":6, "macrophage":7, "UFO":8}
 number_to_class = {y:x for x,y in class_to_number.items()}
 
 class Evaluator():

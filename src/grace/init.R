@@ -5,9 +5,14 @@ library(reticulate); library(tidyverse); library(ggpubr)
 library(cvms)
 library(broom)    # tidy()
 library(rlist); library(feather); library(imager)
+library("readxl")
+
 
 set.seed(1)
+CANDESCENCE="/home/data/refined/candescence"
+GRACE=file.path(CANDESCENCE, "grace")
 
+grace <- readRDS(file.path(GRACE, "grace_library_annotations.rds"))
 
 
 short_filename <- function( fnames ) {
@@ -165,6 +170,39 @@ make_unique_by_iou <- function( hallucin, upper_bound ){
   return(final)
 }
 
+reformat_grace_annotations <- function( ) {
+  
+  raw <-  read_excel(file.path(GRACE, "grace_library_annotations.xlsx")) 
+  raw <- raw %>%
+      relocate( `Plate`, Position, `orf19 name`, Common, `Feature Name`, `Description`, 
+                `Replicate 1 Macrophages`, `Replicate 1 TC conditions...36`, 
+                `Replicate 2 Macrophages`, `Replicate 1 TC conditions...39`,
+                `S.cerevisiae homologue`, `S. cerevisiae KO phenotype` )
+  raw <- raw %>%
+      rename( plate=`Plate`, position=Position, orf=`orf19 name`, common=Common, feature_name=`Feature Name`, 
+              description=`Description`, 
+              rep1_macro=`Replicate 1 Macrophages`, rep1_TC_36=`Replicate 1 TC conditions...36`, 
+              rep2_macro=`Replicate 2 Macrophages`, rep1_TC_39=`Replicate 1 TC conditions...39`,
+              sc_homologue=`S.cerevisiae homologue`, sc_ko_pheno=`S. cerevisiae KO phenotype` ) 
+  
+  raw$plate <- as.integer(str_split(raw$plate, pattern="Plate ", simplify=TRUE)[,2])
+  raw <- raw %>% separate( col=position, into=c("row", "column"), sep=1 )
+  raw$column <- as.character(as.integer(raw$column))
+  
+  grace <- raw
+  saveRDS(grace, file.path(GRACE, "grace_library_annotations.rds"))
+}
+
+calculate_area_via_diagnonal <- function( t,l, b, r, width=10 ) {
+  adj <- sqrt( width^2 / 2 )  
+  if ((b-t) < width) 
+    if ((r-l) < width) return( (b-t)*(r-l) )  else return( width * (r-l) )
+        
+  if ((r-l) < width) return( width * (b-t) )
+  
+  tri <- ((b-t-adj) * (r-l-adj))/2
+  return( ((b-t) * (r-l)) - 2*(tri) )
+}
 
 
 

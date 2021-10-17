@@ -1,5 +1,7 @@
 library(tidyverse)
 
+# train and validation
+
 all_images <- "/home/data/raw/candescence"
 output <- file.path(all_images, "together")
 
@@ -34,4 +36,3 @@ for (i in 1:length(all_files)) {
   cat("\n convert ", all_files[i], " ", paste0(tmp[[i]][1], ".bmp" ))
 }
   
-
