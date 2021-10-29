@@ -50,7 +50,7 @@ py_save_object(validation, filename = file.path(OUTPUT, "val_gracetc.pkl"), pick
 
 file.remove(file.path(OUTPUT, "train", list.files(file.path(OUTPUT, "train"))))
 file.remove(file.path(OUTPUT, "val", list.files(file.path(OUTPUT, "val"))))
-file.remove(file.path(OUTPUT, "test", list.files(file.path(OUTPUT, "test"))))
+#file.remove(file.path(OUTPUT, "test", list.files(file.path(OUTPUT, "test"))))
 
 train_filenames <- c()
 for (i in 1:length(train)) {

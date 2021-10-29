@@ -12,8 +12,8 @@ source(file.path(root, "src", "grace", "init.R"))
 
 ```{r, include=FALSE, results='hide'}
 tc <-list()
-tc['numba'] = "results_blue_freezie"   # this was our best one
-tc['exp'] = "blue_freezie" 
+tc['numba'] = "results_big_momentum"   # this was our best one
+tc['exp'] = "big_momentum" 
 tc[['target']] = c("train", "val")   
 tc[['thresholds']] = seq(0.1, 0.6, by=0.1)
 
@@ -176,8 +176,8 @@ However, for the sake of developing code while we wait for the extended learning
 $\tau_{tc}=\tau_{macro}=0.3$
 ```{r, results="hide"}
 tc['opt_threshold']<-0.3; macro['opt_threshold'] <- 0.3
-sum_stats %>% filter(experiment=="blue_freezie", threshold==tc['opt_threshold']) %>% print(width=Inf)
-sum_stats %>% filter(experiment=="slow_lax", threshold==tc['opt_threshold']) %>% print(width=Inf)
+sum_stats %>% filter(experiment==tc['exp'], threshold==tc['opt_threshold']) %>% print(width=Inf)
+sum_stats %>% filter(experiment==macro['exp'], threshold==macro['opt_threshold']) %>% print(width=Inf)
 
 saveRDS(tc, file=file.path(tc['SAVE_RESULTS'], "optimal_classifier.rds"))
 saveRDS(macro, file=file.path(macro['SAVE_RESULTS'], "optimal_classifier.rds"))

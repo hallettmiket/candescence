@@ -3,8 +3,8 @@
 import os
 import sys
 
-exp = "13"  # experiment number
-gpu = "4"
+exp = "15"  # experiment number
+gpu = "8"
 lr = "0.01"
 momentum = "0.9"
 decay = "0.0001"

@@ -6,8 +6,10 @@ import numpy as np
 # orig = pd.read_pickle("/home/data/refined/candescence/train-data/final/train_white.pkl")
 # o=orig[0]
 
-train=pd.read_pickle("/home/data/refined/candescence/train-data/gracetc/train_gracetc.pkl")
-val=pd.read_pickle("/home/data/refined/candescence/train-data/gracetc/val_gracetc.pkl")
+train=pd.read_pickle("/home/data/refined/candescence/train-data/grace_tc/train_gracetc.pkl")
+
+
+val=pd.read_pickle("/home/data/refined/candescence/train-data/grace_tc/val_gracetc.pkl")
 
 for i in range(0,len(train)):
   tmp=np.zeros( (len(train[i]['ann']['bboxes']), 4), dtype='float32')

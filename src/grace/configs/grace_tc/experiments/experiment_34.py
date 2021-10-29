@@ -3,13 +3,13 @@
 import os
 import sys
 
-exp = "25" # experiment number
-gpu = "9"
+exp = "34" # experiment number
+gpu = "2"
 lr = "0.01"
-momentum = "0.9"
-decay = "0.001"
+momentum = "0.99"
+decay = "0.0001"
 total_epochs=3000
-freeze = 2 
+freeze = 0 
 load=True
 pretrained=False
 

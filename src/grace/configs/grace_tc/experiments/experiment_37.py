@@ -3,16 +3,17 @@
 import os
 import sys
 
-exp = "25" # experiment number
-gpu = "9"
+exp = "37" # experiment number
+gpu = "5"
 lr = "0.01"
-momentum = "0.9"
-decay = "0.001"
+momentum = "0.99"
+decay = "0.0001"
 total_epochs=3000
-freeze = 2 
+freeze = -1 
 load=True
 pretrained=False
-
+if freeze==-1:
+    freeze="m1"
 PATH_REPO="/home/hallett/repo/candescence/"
 PATH_EXPERIMENTS=PATH_REPO+"src/grace/configs/grace_tc/experiments"
 PATH_CONFIGS=PATH_REPO+"src/grace/configs/grace_tc/"
