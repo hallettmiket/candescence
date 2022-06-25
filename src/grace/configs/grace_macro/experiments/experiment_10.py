@@ -4,7 +4,7 @@ import os
 import sys
 
 exp = "10" # experiment number
-gpu = "5"
+gpu = "1"
 lr = "0.001"
 momentum = "0.9"
 decay = "0.0001"
