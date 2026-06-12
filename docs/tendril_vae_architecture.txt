@@ -1,0 +1,206 @@
+TENDRIL VAE (Strategy #14) — Full Architecture
+================================================
+
+The Tendril VAE has two stages:
+  Stage 1: Train the primary VAE (a FiLM-conditioned UNet-VAE)
+  Stage 2: Train secondary "tendril" VAEs on the encoder's feature maps
+
+
+================================================================================
+STAGE 1: PRIMARY VAE TRAINING
+================================================================================
+
+The primary VAE is a UNet-style encoder-decoder with FiLM conditioning.
+During training, the encoder and decoder can receive DIFFERENT conditioning
+values (e.g., different hue values), so the skip connections carry
+encoder-conditioned features into a differently-conditioned decoder.
+
+                        encoder_cond                    decoder_cond
+                        (real hue)                      (augmented hue)
+                            |                               |
+                            v                               v
+
+    Input Image        ENCODER                         DECODER              Reconstructed
+   (3 x 128 x 128)                                                          Image
+        |                                                                  (3 x 128 x 128)
+        |                                                                       ^
+        v                                                                       |
+   +---------+    +------------------+                                   +------+------+
+   |         |--->| Conv 3->64       |                                   | ConvT 32->3 |
+   |         |    | BN + LeakyReLU   |                                   | Sigmoid     |
+   |         |    | FiLM(enc_cond)   |                                   +------+------+
+   |         |    | Conv 64->64      |                                          ^
+   |         |    | BN + LeakyReLU   |                                          |
+   |         |    +--------+---------+                                   +------+------+
+   |         |             |                                             | ConvT 128->32|
+   |         |     x1: 64 x 128 x 128  -------- skip1 --------.        | Conv 32->32  |
+   |         |             |                                    |        | FiLM(dec)    |
+   |         |         [MaxPool]                           [concat]      +------+------+
+   |         |             |                                    |               ^
+   |         |             v                                    v               |
+   |         |    +------------------+                   +------+------+ +------+------+
+   |         |    | Conv 64->128     |                   | cat(x,skip1)| | ConvT 256->64|
+   |         |    | BN + LeakyReLU   |                   | 64+64=128ch| | Conv 64->64  |
+   |         |    | FiLM(enc_cond)   |                   +-------------+ | FiLM(dec)    |
+   |         |    | Conv 128->128    |                                   +------+------+
+   |         |    | BN + LeakyReLU   |                                          ^
+   |         |    +--------+---------+                                          |
+   |         |             |                                             +------+------+
+   |         |    x2: 128 x 64 x 64  --------- skip2 --------.         | cat(x,skip2)|
+   |         |             |                                   |         | 128+128=256ch|
+   |         |         [MaxPool]                          [concat]       +------+------+
+   |         |             |                                   |                ^
+   |         |             v                                   v                |
+   |         |    +------------------+                   +------+------+  +------+------+
+   |         |    | Conv 128->256    |                   | cat(x,skip2) | | ConvT 512->128|
+   |         |    | BN + LeakyReLU   |                   | 128+128=256ch| | Conv 128->128|
+   |         |    | FiLM(enc_cond)   |                   +--------------+ | FiLM(dec)    |
+   |         |    | Conv 256->256    |                                    +------+------+
+   |         |    | BN + LeakyReLU   |                                           ^
+   |         |    +--------+---------+                                           |
+   |         |             |                                              +------+------+
+   |         |    x3: 256 x 32 x 32  ---------- skip3 ---------.        | cat(x,skip3)|
+   |         |             |                                    |        | 256+256=512ch|
+   |         |         [MaxPool]                           [concat]      +------+------+
+   |         |             |                                    |               ^
+   |         |             v                                    v               |
+   |         |    +------------------+                   +------+------+ +------+------+
+   |         |    | Conv 256->512    |                   | cat(x,skip3)| | ConvT 1024->256|
+   |         |    | BN + LeakyReLU   |                   | 256+256=512ch| | FiLM(dec)   |
+   |         |    | FiLM(enc_cond)   |                   +-------------+ +------+------+
+   |         |    | Conv 512->512    |                                          ^
+   |         |    | BN + LeakyReLU   |                                          |
+   |         |    +--------+---------+                                   +------+------+
+   |         |             |                                             | cat(z',skip4)|
+   |         |    x4: 512 x 16 x 16  ---------- skip4 ---------.       | 512+512=1024ch|
+   |         |             |                                    |        +------+------+
+   +---------+             |                                    |               ^
+                           v                                [concat]            |
+                     [Flatten]                                  '------>  z' = fc(z)
+                           |                                          reshaped to
+                           v                                          512 x 16 x 16
+                    +-------------+
+                    | fc_mu       |---> mu  (128-d)
+                    | fc_logvar   |---> logvar (128-d)
+                    +-------------+
+                           |
+                    [Reparameterize]
+                           |
+                           v
+                        z (128-d)
+
+
+  KEY POINT: encoder_cond and decoder_cond can be DIFFERENT during training.
+  The skip connections carry encoder-conditioned features into the decoder
+  which applies its own (different) FiLM modulation.
+
+
+  LOSS (Strategy #14):
+    L = L_recon(x_target, x_hat) + L_KL(mu, logvar) + L_cond(x_target, x_hat)
+
+  Where x_target may be an augmented version of the input (different hue).
+
+
+================================================================================
+STAGE 2: TENDRIL VAEs (post-training)
+================================================================================
+
+After Stage 1 completes, the SkipLogger has accumulated the encoder's
+feature maps for ALL training and validation images. Each feature map
+layer becomes the training data for a separate TendrilLayerVAE.
+
+The tendrils learn compressed latent representations of each encoder
+layer's feature maps. This produces a multi-scale hierarchical
+latent space.
+
+
+  Trained Primary Encoder
+  (frozen after Stage 1)
+          |
+          | produces feature maps for all images
+          |
+          v
+  +-------+-------+-------+-------+
+  |       |       |       |       |
+  x1      x2      x3      x4      z
+  64x     128x    256x    512x    128-d
+  128x128 64x64   32x32   16x16
+  |       |       |       |
+  v       v       v       v
++------+ +------+ +------+ +------+
+|Tendrl| |Tendrl| |Tendrl| |Tendrl|     (each is an independent
+|VAE 0 | |VAE 1 | |VAE 2 | |VAE 3 |     TendrilLayerVAE)
++--+---+ +--+---+ +--+---+ +--+---+
+   |        |        |        |
+   v        v        v        v
+  z_t0     z_t1     z_t2     z_t3       (secondary latents,
+  128-d    128-d    128-d    128-d       each 128-dimensional)
+
+
+  Each TendrilLayerVAE is a small convolutional VAE:
+
+  Input feature map (e.g. 64 x 128 x 128 for layer 0)
+      |
+      v
+  +------------------+
+  | Conv(in,32,4x4)  |  stride=2
+  | BN + ReLU        |
+  | Dropout(0.3)     |
+  +------------------+
+      |
+  +------------------+
+  | Conv(32,64,4x4)  |  stride=2
+  | BN + ReLU        |
+  | Dropout(0.3)     |
+  +------------------+
+      |
+  +------------------+
+  | Conv(64,128,4x4) |  stride=2
+  | BN + ReLU        |
+  | Dropout(0.3)     |
+  +------------------+
+      |
+  [Flatten]
+      |
+  fc_mu -----> mu_tendril (128-d)
+  fc_logvar -> logvar_tendril
+      |
+  [Reparameterize]
+      |
+      v
+  z_tendril (128-d)
+      |
+  [fc_latent + reshape]
+      |
+  [Symmetric decoder: ConvT 128->64->32->in_channels, Sigmoid]
+      |
+      v
+  Reconstructed feature map
+
+  Tendril Loss: L_KL + L_recon (MSE or log-cosh)
+  Per-image normalization applied before training.
+
+
+================================================================================
+COMPLETE IMAGE REPRESENTATION
+================================================================================
+
+  For a single image, Strategy #14 produces:
+
+  +----------------------------------+
+  | Primary latent:  z       (128-d) |  <-- from VAE bottleneck
+  | Tendril 0:       z_t0    (128-d) |  <-- from x1 (64 x 128x128)
+  | Tendril 1:       z_t1    (128-d) |  <-- from x2 (128 x 64x64)
+  | Tendril 2:       z_t2    (128-d) |  <-- from x3 (256 x 32x32)
+  | Tendril 3:       z_t3    (128-d) |  <-- from x4 (512 x 16x16)
+  +----------------------------------+
+  Total: 5 x 128 = 640-dimensional hierarchical representation
+
+  z     captures global abstract features (morphology type)
+  z_t0  captures fine-grained spatial detail (edges, textures)
+  z_t1  captures mid-level local features
+  z_t2  captures mid-level spatial structure
+  z_t3  captures coarse abstract features (near-bottleneck)
+
+  Together they form a multi-resolution description of the
+  Candida colony morphology.

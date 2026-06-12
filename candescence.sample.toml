@@ -1,0 +1,18 @@
+# Candescence config for the bundled sample dataset.
+#
+# Quickstart for a fresh clone (run from the repository root):
+#     cp candescence.sample.toml candescence.toml
+#     streamlit run src/candescence/interface/app.py
+#
+# This points the app at the ~36 real colony images shipped in data/sample/
+# (no access to the lab VM required) and writes any models/outputs to a local
+# _candescence_runs/ directory. Relative paths resolve from the repo root, so
+# launch the app from there.
+
+[paths]
+# Bundled sample images (PNG) + their morphology labels.
+images = "data/sample/images"
+manual_labels_csv = "data/sample/manually_labelled_images.csv"
+
+# Where trained models, the zoo, and analysis outputs are written locally.
+refined = "_candescence_runs"

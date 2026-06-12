@@ -1,0 +1,96 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Data files (should be in <data>/)
+*.pkl
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.parquet
+*.feather
+
+# Model checkpoints (should be in refined/)
+*.pth
+*.pt
+*.ckpt
+checkpoints/
+
+# Large files
+*.tar
+*.tar.gz
+*.zip
+*.tex
+
+# Credentials
+*.env
+credentials.json
+secrets.yaml
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Temporary files
+tmp/
+temp/
+
+# Coverage
+.coverage
+.coverage.*
+
+# Claude Code session/local config
+.claude/
+
+# Local Candescence path overrides (keep candescence.toml.example +
+# candescence.sample.toml tracked)
+candescence.toml
+
+# Local run outputs when using the bundled sample config
+_candescence_runs/

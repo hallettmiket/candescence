@@ -1,0 +1,40 @@
+# Candescence path configuration (example)
+#
+# Copy this file to `candescence.toml` in the repository root (or to
+# ~/.config/candescence/candescence.toml) and edit the paths to point at your
+# own data. Every value is OPTIONAL: anything you omit falls back to the
+# packaged default (the Hallett-lab VM layout).
+#
+# Precedence (highest first):
+#   1. Explicit argument in code (load_settings(...))
+#   2. Environment variable  (e.g. CANDESCENCE_REFINED)
+#   3. This config file
+#   4. Packaged default
+#
+# The matching environment variables are, in order: CANDESCENCE_RAW,
+# CANDESCENCE_REFINED, CANDESCENCE_IMAGES, CANDESCENCE_ZOO,
+# CANDESCENCE_METADATA_XLSX, CANDESCENCE_MANUAL_LABELS_CSV.
+# Point CANDESCENCE_CONFIG at this file to load it from a non-default location.
+
+[paths]
+# Immutable raw-data root (read-only by convention).
+# raw = "/path/to/your/raw"
+
+# Refined-data root (append-only) where outputs, the model zoo, and cleaned
+# metadata live. Overriding just this moves zoo/ and data_files/ coherently.
+# refined = "/path/to/your/refined"
+
+# Default directory of input colony images for the app and training.
+# Defaults to <raw>/tlv_images/all-final.
+# images = "/path/to/your/images"
+
+# Model/dataset registry root. Defaults to <refined>/zoo.
+# zoo = "/path/to/your/zoo"
+
+# "Big" cleaned metadata spreadsheet. Defaults to
+# <refined>/data_files/cleaned_candida_metadata.xlsx.
+# metadata_xlsx = "/path/to/cleaned_candida_metadata.xlsx"
+
+# Manual morphology labels (file_name + morphology). Defaults to
+# <refined>/data_files/manually_labelled_images.csv.
+# manual_labels_csv = "/path/to/manually_labelled_images.csv"

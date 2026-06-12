@@ -1,0 +1,63 @@
+{
+  "_comment_": "Example config for a Strategy 16 (per-variable FiLM, hue+media only, no day) TLV training run. Copy this file, edit the fields you care about, and run: python scripts/train_tlv.py --config my_run.json. Strategy 16 differs from Strategy 15 only in that the per-block day FiLM pathway is removed — motivated by the hue_day_medium_plate variance analysis.",
+
+  "experiment_name": "5_strategy16_no_day_film",
+  "save_name": "s16_hue_media_run1",
+
+  "strategy": 16,
+  "architecture": "multi_cond_tendril_vae",
+
+  "raw_images_path": "/path/to/your/images",
+  "image_dimension": 128,
+
+  "day_filter": null,
+  "washed_filter": null,
+  "media_filter": null,
+  "restrict_to_day": null,
+
+  "grayscale": false,
+  "grayscale_background_normalize": false,
+  "grayscale_bg_target": 0.5,
+  "grayscale_bg_border": 12,
+  "merge_manually_labelled": true,
+
+  "train_num": 4000,
+  "validation_num": 500,
+  "test_num": 500,
+
+  "latent_dim": 128,
+  "intermediate_dim": 256,
+  "leaky_relu_slope": 0.02,
+  "conditional_variables": ["average_hue"],
+
+  "use_fixed_decoder": true,
+  "conditional_decoder_fixed_values": {"average_hue": 0.5},
+  "augment_decoder_images": false,
+  "augment_images": false,
+  "augmentation_variables": null,
+  "augmentation_spread": 0.1,
+
+  "number_epochs": 100,
+  "batch_size": 256,
+  "vae_lr": 1e-4,
+  "film_lr": 5e-4,
+  "vae_loss_function": "mse",
+  "kl_weight": 1.0,
+  "cycle_length": 10,
+  "mse_weight": 100.0,
+  "lpips_weight": 100.0,
+  "ssim_weight": 100.0,
+  "conditional_loss_weight": 1000.0,
+  "report_periodicity": 5,
+
+  "tendril_num_epochs": 50,
+  "tendril_lr": 1e-4,
+  "tendril_batch_size": 256,
+  "tendril_latent_dim": 128,
+  "tendril_weight_decay": 1.5e-3,
+  "tendril_loss_fn": "MSE",
+  "tendril_kl_weight": 1.0,
+  "tendril_recon_weight": 1.0,
+
+  "device": "cuda:4"
+}
