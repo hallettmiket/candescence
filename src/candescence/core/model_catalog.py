@@ -29,7 +29,11 @@ PUBLIC_STRATEGIES: tuple[int, ...] = (14, 1, 0)
 
 # Architecture names exposed to end users by default. Kept in sync with the
 # strategy->architecture mapping in ``candescence.tlv.factory._prepare_strategy``.
-PUBLIC_ARCHITECTURES: frozenset[str] = frozenset({"c_vae", "uc_vae", "tendril_vae"})
+# ``diffusion_vae`` is the ported conditional-diffusion model (inference-only in
+# the app for now; see candescence.tlv.diffusion).
+PUBLIC_ARCHITECTURES: frozenset[str] = frozenset(
+    {"c_vae", "uc_vae", "tendril_vae", "diffusion_vae"}
+)
 
 # Environment override: set truthy to default the app into research mode (all
 # strategies/architectures visible) without clicking the in-app toggle.

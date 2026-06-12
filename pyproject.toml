@@ -49,6 +49,8 @@ dependencies = [
     "streamlit>=1.30.0",
     "plotly>=5.18.0",
     "opencv-python>=4.7.0",
+    # Config handling for the ported diffusion model checkpoints.
+    "omegaconf>=2.3.0",
     # TOML config-file support; stdlib tomllib is used on Python 3.11+.
     "tomli>=2.0.0; python_version < '3.11'",
 ]

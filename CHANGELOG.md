@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.1.0 — Diffusion + Model Quality (2026-06-12)
+
+- **TLV Diffusion page** — ported the conditional diffusion model (SemanticEncoder
+  + FiLM-conditioned DiffusionUNet, DDPM/DDIM) into `candescence.tlv.diffusion`.
+  Generate / reconstruct / interpolate / explore the semantic latent space; the
+  pretrained model is registered in the zoo as a public-tier model.
+- **Model Quality page** — a per-model scorecard: reconstruction fidelity,
+  posterior-collapse / active-dimension diagnostics, latent PCA scree, latent
+  silhouette by medium, and training-loss history.
+
 ## v2.0.0 — Production release (2026-06-12)
 
 A ground-up production version of Candescence for *Candida albicans* colony

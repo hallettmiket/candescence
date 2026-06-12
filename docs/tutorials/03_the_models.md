@@ -221,11 +221,23 @@ code maps to different visual appearances under different color conditions.
 
 ---
 
-## Coming soon — Stable Diffusion companion
+## Diffusion companion (TLV Diffusion page)
 
-A Stable Diffusion generative model for *C. albicans* colony image synthesis is
-described in the thesis discussion (Chapter 5, "A diffusion-based generative companion
-to the VAE") and is planned for a future release. It is not yet available in the app.
+A generative **conditional diffusion model** (a DDPM/DDIM denoiser conditioned on a
+learned semantic code), the thesis's "diffusion-based generative companion to the
+VAE," is available on the **TLV Diffusion** page. There you can **generate** novel
+colonies from random semantic codes, **reconstruct** real ones, **interpolate**
+between two colonies, and explore the semantic latent space. (Generation is fast via
+DDIM; reconstruction runs the full reverse chain, so use a GPU for it.)
+
+## Evaluating a model — the Model Quality page
+
+The **Model Quality** page gives a per-model scorecard tying together the thesis's
+evaluation story: reconstruction fidelity (MSE/PSNR), **posterior-collapse / active-
+dimension** diagnostics (how many latent dimensions the model actually uses), latent
+geometry (PCA scree), latent structure by growth medium (silhouette), and the training
+loss history. The interactive **TLV Explorer** complements it with deep, hands-on
+latent-space exploration (sprite maps, interpolation, clustering).
 
 ---
 

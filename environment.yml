@@ -37,6 +37,9 @@ dependencies:
   # TOML config-file parsing (stdlib tomllib is used on Python 3.11+)
   - tomli>=2.0.0
 
+  # Config handling for ported diffusion-model checkpoints
+  - omegaconf>=2.3.0
+
   # Metrics
   - torchmetrics>=1.0.0
 
