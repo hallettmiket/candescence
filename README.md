@@ -20,8 +20,8 @@ association across thousands of colonies. It accompanies Harry's thesis
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/hallettmiket/candescence_new.git
-cd candescence_new
+git clone https://github.com/hallettmiket/candescence.git
+cd candescence
 conda env create -f environment.yml
 conda activate candescence_new
 
@@ -101,7 +101,7 @@ See [Tutorial 02](docs/tutorials/02_using_your_own_images.md) for a full walkthr
 ## Repository layout
 
 ```
-candescence_new/
+candescence/
 ├── src/candescence/          # Python package
 │   ├── interface/            # Streamlit app and pages
 │   ├── tlv/                  # VAE architectures and training

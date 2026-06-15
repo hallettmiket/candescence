@@ -23,11 +23,11 @@ model** and projecting colony images through it.
 ## Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/hallettmiket/candescence_new.git
-cd candescence_new
+git clone https://github.com/hallettmiket/candescence.git
+cd candescence
 ```
 
-All commands in this tutorial are run from the **repository root** (`candescence_new/`)
+All commands in this tutorial are run from the **repository root** (`candescence/`)
 unless otherwise stated.
 
 ---

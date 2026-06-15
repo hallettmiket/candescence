@@ -75,9 +75,9 @@ full = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/hallettmiket/candescence_new"
-Documentation = "https://github.com/hallettmiket/candescence_new#readme"
-Repository = "https://github.com/hallettmiket/candescence_new"
+Homepage = "https://github.com/hallettmiket/candescence"
+Documentation = "https://github.com/hallettmiket/candescence#readme"
+Repository = "https://github.com/hallettmiket/candescence"
 
 [tool.setuptools.packages.find]
 where = ["src"]

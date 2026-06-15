@@ -22,7 +22,7 @@ import base64
 LOGO_PATH = Path(__file__).parent.parent.parent.parent / "assets" / "candescence-logo.png"
 LAB_LOGO_PATH = Path(__file__).parent.parent.parent.parent / "assets" / "hallett-lab-logo.svg"
 LAB_URL = "https://www.mikehallett.science/"
-GITHUB_URL = "https://github.com/hallettmiket/candescence_new"
+GITHUB_URL = "https://github.com/hallettmiket/candescence"
 
 
 def _encode_svg(svg_path: Path) -> str:
