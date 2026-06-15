@@ -99,12 +99,8 @@ Outputs: /path/to/candescence/_candescence_runs
 ## Step 4 — Launch the app
 
 ```bash
-nice -n 19 uv run streamlit run src/candescence/interface/app.py
+uv run streamlit run src/candescence/interface/app.py
 ```
-
-> **Why `nice -n 19`?** Lab convention limits background processes to low CPU priority
-> so they do not compete with other work on shared machines. The training wizard also
-> sets `nice 19` internally, but wrapping the whole launch is good practice.
 
 Streamlit prints a local URL (default `http://localhost:8501`). Your browser will
 open it automatically; if not, open the URL manually.
@@ -178,16 +174,6 @@ quick model first:
 Press `Ctrl-C` in the terminal to stop Streamlit. Your trained models are saved under
 `_candescence_runs/zoo/` (or wherever `refined_path` resolves). Delete or rename
 `candescence.toml` to return to the lab-VM default paths.
-
----
-
-## Resource limits
-
-Per lab convention:
-
-- Always launch with `nice -n 19`.
-- Training uses at most **20 CPU cores** and **1 GPU**. The wizard enforces these
-  defaults; do not override them on shared machines without PI sign-off.
 
 ---
 

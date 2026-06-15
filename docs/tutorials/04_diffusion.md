@@ -53,7 +53,7 @@ diffusion chain and really wants a GPU.
 1. Launch the app:
 
    ```bash
-   nice -n 19 uv run streamlit run src/candescence/interface/app.py
+   uv run streamlit run src/candescence/interface/app.py
    ```
 
 2. Open the **TLV Diffusion** page from the sidebar. (If you don't see it, enable

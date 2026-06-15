@@ -45,12 +45,12 @@ uv sync
 cp candescence.sample.toml candescence.toml
 
 # 3. Launch
-nice -n 19 uv run streamlit run src/candescence/interface/app.py
+uv run streamlit run src/candescence/interface/app.py
 
 # 4. Point at your own images
 export CANDESCENCE_IMAGES=/path/to/your/images
 export CANDESCENCE_REFINED=/path/to/outputs
-nice -n 19 uv run streamlit run src/candescence/interface/app.py
+uv run streamlit run src/candescence/interface/app.py
 ```
 
 ---

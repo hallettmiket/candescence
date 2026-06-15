@@ -28,7 +28,7 @@ uv sync                 # add --all-extras for the dev + analysis tooling
 cp candescence.sample.toml candescence.toml
 
 # 3. Launch (uv run executes inside the project environment)
-nice -n 19 uv run streamlit run src/candescence/interface/app.py
+uv run streamlit run src/candescence/interface/app.py
 ```
 
 The app opens in your browser. The **TLV Explorer** projects colony images into
@@ -118,24 +118,10 @@ candescence/
 
 ---
 
-## Resource guidelines
-
-Per lab convention, all Candescence processes should run under low CPU priority:
-
-```bash
-nice -n 19 uv run streamlit run src/candescence/interface/app.py
-```
-
-The training wizard enforces `nice 19` internally and uses at most 20 CPU cores
-and 1 GPU by default. Do not override these limits on shared machines without
-PI sign-off.
-
----
-
 ## Authors
 
 Hallett Lab — [mikehallett.science](https://mikehallett.science)
-Contact: mike.hallett@uwo.ca
+Contact: michael.hallett@uwo.ca
 
 ---
 
@@ -148,4 +134,4 @@ Contact: mike.hallett@uwo.ca
 
 ## License
 
-See [LICENSE](LICENSE).
+Candescence is released under the MIT License. See [LICENSE](LICENSE).

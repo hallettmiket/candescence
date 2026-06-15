@@ -365,4 +365,4 @@ This document describes how the Candescence software and data are organized acro
 | Application | Command |
 |-------------|---------|
 | **Latent Explorer** | `uv run streamlit run src/candescence/interface/apps/latent_explorer_app.py` |
-| **Training App** | `nice -n 19 uv run streamlit run src/candescence/interface/apps/training_app.py` |
+| **Training App** | `uv run streamlit run src/candescence/interface/apps/training_app.py` |
