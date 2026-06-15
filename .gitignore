@@ -94,3 +94,6 @@ candescence.toml
 
 # Local run outputs when using the bundled sample config
 _candescence_runs/
+
+# Isolated legacy mmdet env for Varasana/Grace detectors
+.venv-legacy/
