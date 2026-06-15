@@ -124,6 +124,10 @@ _PROJECTS: Dict[str, Project] = {
         "10.1128/spectrum.01472-22",
         pages=[
             ProjectPage(
+                "Varasana Detection", "8_Varasana_Detection",
+                "Detect & classify cells with the pretrained FCOS model", "🔬",
+            ),
+            ProjectPage(
                 "Varasana Training", "3_Varasana_Training",
                 "Train FCOS object detection models", "🎯",
             ),

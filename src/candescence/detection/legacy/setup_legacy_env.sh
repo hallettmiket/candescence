@@ -42,8 +42,10 @@ uv pip install --python "$PY" "mmcv-full==1.2.5" \
 # pycocotools.__version__ so mmdet's import-time version assert passes.
 echo ">>> [4/4] mmdet 2.10.0 (no deps) + runtime deps"
 uv pip install --python "$PY" --no-deps "mmdet==2.10.0"
+# setuptools is required at runtime (torch.utils.cpp_extension imports it); the
+# pinned numpy must be repeated so the other deps don't pull it forward.
 uv pip install --python "$PY" "numpy==1.19.5" "pycocotools" "matplotlib==3.3.4" \
-  "terminaltables" "six"
+  "terminaltables" "six" "setuptools" "wheel"
 
 echo ">>> Verifying import + API..."
 "$PY" - <<'PYEOF'
