@@ -141,9 +141,15 @@ _PROJECTS: Dict[str, Project] = {
         color="#1ABC9C",  # teal
         description="FCOS detectors for macrophage (9-class) and tissue-culture "
         "(7-class) Candida albicans morphology classification.",
-        status="planned",
+        status="active",
         reference="Case, Westman et al. (2023) mBio, 10.1128/mbio.02745-23",
-        pages=[],
+        pages=[
+            ProjectPage(
+                "Grace Detection", "9_Grace_Detection",
+                "Detect & classify cells with the pretrained macro / TC models",
+                "🔬",
+            ),
+        ],
     ),
 }
 
