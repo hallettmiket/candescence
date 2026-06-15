@@ -13,9 +13,10 @@ from typing import Dict, List, Optional
 
 import streamlit as st
 
-from candescence.interface.core.theme import THEME, apply_theme, page_header, status_badge
+from candescence.interface.core.theme import apply_theme, status_badge
 from candescence.core.model_zoo import ModelZoo, ZooEntry
 from candescence.core.dataset_zoo import DatasetZoo, DatasetEntry
+from candescence.core.projects import all_projects, project_color
 
 import base64
 
@@ -88,36 +89,8 @@ def render_home_page() -> None:
 
     st.divider()
 
-    # Quick navigation cards
-    st.subheader("Quick Start")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        _render_nav_card(
-            title="TLV Training",
-            description="Train Tendril VAE models for latent space analysis",
-            page="1_TLV_Training",
-            color=THEME["tlv_color"],
-            icon="🧬"
-        )
-
-    with col2:
-        _render_nav_card(
-            title="TLV Explorer",
-            description="Explore trained VAE latent spaces interactively",
-            page="2_TLV_Explorer",
-            color=THEME["tlv_color"],
-            icon="🔍"
-        )
-
-    with col3:
-        _render_nav_card(
-            title="Varasana Training",
-            description="Train FCOS object detection models",
-            page="3_Varasana_Training",
-            color=THEME["varasana_color"],
-            icon="🎯"
-        )
+    # Project launcher (driven by the central project registry)
+    _render_projects_launcher()
 
     st.divider()
 
@@ -136,39 +109,63 @@ def render_home_page() -> None:
     _render_recent_activity()
 
 
-def _render_nav_card(
-    title: str,
-    description: str,
-    page: str,
-    color: str,
-    icon: str = "",
-) -> None:
-    """Render a navigation card for a page."""
-    st.markdown(
-        f"""
-        <div style="
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            padding: 1rem;
-            border-left: 4px solid {color};
-            height: 120px;
-        ">
-            <h4 style="margin: 0 0 0.5rem 0;">{icon} {title}</h4>
-            <p style="color: #666; font-size: 0.9rem; margin: 0;">{description}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def _render_projects_launcher() -> None:
+    """Render a launcher with one column per registered project.
+
+    Driven entirely by ``candescence.core.projects`` — adding a project (or a
+    page to one) is a registry edit, not a change here.
+    """
+    st.subheader("Projects")
+
+    projects = all_projects()
+    cols = st.columns(len(projects))
+
+    for col, project in zip(cols, projects):
+        with col:
+            status_note = "" if project.status == "active" else (
+                '<div style="color: #999; font-size: 0.8rem; margin-top: 0.5rem;">'
+                "Integration in progress</div>"
+            )
+            st.markdown(
+                f"""
+                <div style="
+                    background-color: {project.color}15;
+                    border-radius: 8px;
+                    padding: 0.75rem 1rem;
+                    border-left: 4px solid {project.color};
+                    margin-bottom: 0.75rem;
+                ">
+                    <span style="color: {project.color}; font-weight: 700;
+                        text-transform: uppercase; font-size: 0.75rem;">
+                        {project.kind}</span>
+                    <h3 style="margin: 0.15rem 0 0 0;">{project.label}</h3>
+                    <div style="color: #666; font-size: 0.85rem;">{project.full_name}</div>
+                    <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
+                        {project.description}</p>
+                    {status_note}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            for page in project.pages:
+                st.markdown(
+                    f"""
+                    <div style="padding: 0.35rem 0; border-bottom: 1px solid #eee;">
+                        <span style="font-weight: 600;">{page.icon} {page.title}</span><br/>
+                        <span style="color: #888; font-size: 0.8rem;">{page.description}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            if not project.pages:
+                st.caption("No pages yet.")
 
 
 def _get_project_color(project: str) -> str:
-    """Get theme color for a project."""
-    color_map = {
-        "tlv": THEME["tlv_color"],
-        "varasana": THEME["varasana_color"],
-        "grace": THEME.get("grace_color", "#1ABC9C"),
-    }
-    return color_map.get(project, "#666666")
+    """Get theme color for a project (delegates to the project registry)."""
+    return project_color(project)
 
 
 def _render_models_overview() -> None:

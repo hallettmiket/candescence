@@ -13,12 +13,11 @@ from typing import Optional
 import streamlit as st
 
 from candescence.interface.core.theme import (
-    THEME,
     apply_theme,
     page_header,
-    get_subproject_color,
 )
 from candescence.core.dataset_zoo import DatasetZoo, DatasetEntry
+from candescence.core.projects import project_color
 from candescence.core.settings import get_settings
 
 _settings = get_settings()
@@ -33,13 +32,8 @@ st.set_page_config(
 
 
 def _get_project_color(project: str) -> str:
-    """Get theme color for a project."""
-    color_map = {
-        "tlv": THEME["tlv_color"],
-        "varasana": THEME["varasana_color"],
-        "grace": THEME.get("grace_color", "#1ABC9C"),
-    }
-    return color_map.get(project, "#666666")
+    """Get theme color for a project (delegates to the project registry)."""
+    return project_color(project)
 
 
 def main() -> None:

@@ -11,6 +11,8 @@ from typing import Dict, Optional
 
 import streamlit as st
 
+from candescence.core.projects import project_color
+
 # Logo paths (resolved relative to this file -> repo root / assets/)
 _LOGO_PATH = Path(__file__).parent.parent.parent.parent.parent / "assets" / "candescence-logo.png"
 _SIDEBAR_LOGO_PATH = Path(__file__).parent.parent.parent.parent.parent / "assets" / "candescence-logo-sidebar.png"
@@ -25,10 +27,11 @@ THEME: Dict[str, str] = {
     "text_color": "#333333",
     "font_family": "Inter, sans-serif",
 
-    # Subproject colors
-    "tlv_color": "#9B59B6",        # Purple for TLV (Tendril Latent VAE)
-    "varasana_color": "#E67E22",   # Orange for Varasana (Object Detection)
-    "grace_color": "#1ABC9C",      # Teal for Grace (future)
+    # Subproject colors — sourced from the central project registry
+    # (candescence.core.projects) so there is a single source of truth.
+    "tlv_color": project_color("tlv"),
+    "varasana_color": project_color("varasana"),
+    "grace_color": project_color("grace"),
 
     # Status colors
     "success_color": "#27AE60",
@@ -63,12 +66,7 @@ def get_subproject_color(subproject: str) -> str:
     Returns:
         Hex color string for the subproject
     """
-    color_map = {
-        "tlv": THEME["tlv_color"],
-        "varasana": THEME["varasana_color"],
-        "grace": THEME["grace_color"],
-    }
-    return color_map.get(subproject.lower(), THEME["primary_color"])
+    return project_color(subproject, default=THEME["primary_color"])
 
 
 def apply_theme() -> None:
