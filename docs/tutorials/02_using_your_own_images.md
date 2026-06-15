@@ -66,7 +66,7 @@ but medium/day metadata will not appear in the Explorer color-by menus.
 3. Launch as usual:
 
    ```bash
-   nice -n 19 streamlit run src/candescence/interface/app.py
+   nice -n 19 uv run streamlit run src/candescence/interface/app.py
    ```
 
 The config file is read from the repo root by default. To keep it elsewhere:
@@ -160,7 +160,7 @@ seeing and which environment variables are set.
 # Suppose your images are in ~/Desktop/my_candida_images/
 export CANDESCENCE_IMAGES=~/Desktop/my_candida_images
 export CANDESCENCE_REFINED=~/Desktop/candescence_outputs
-nice -n 19 streamlit run src/candescence/interface/app.py
+nice -n 19 uv run streamlit run src/candescence/interface/app.py
 ```
 
 Then in the **TLV Explorer** select **"Directory path"**, leave it blank (it reads from

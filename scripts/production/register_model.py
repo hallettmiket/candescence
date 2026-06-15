@@ -32,7 +32,7 @@ Usage:
     python register_model.py --unregister my_model_id
 
 Environment:
-    conda activate candescence_new
+    uv run python register_model.py ...   # or activate .venv first
 """
 
 import argparse

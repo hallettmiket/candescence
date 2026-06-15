@@ -230,6 +230,9 @@ colonies from random semantic codes, **reconstruct** real ones, **interpolate**
 between two colonies, and explore the semantic latent space. (Generation is fast via
 DDIM; reconstruction runs the full reverse chain, so use a GPU for it.)
 
+For a hands-on walkthrough — in the app and programmatically — see
+[Tutorial 04 — The Diffusion Companion](04_diffusion.md).
+
 ## Evaluating a model — the Model Quality page
 
 The **Model Quality** page gives a per-model scorecard tying together the thesis's

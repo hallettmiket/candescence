@@ -19,17 +19,16 @@ association across thousands of colonies. It accompanies Harry's thesis
 ## Quickstart (5 minutes)
 
 ```bash
-# 1. Clone and install
+# 1. Clone and install (uv creates a project-local .venv from uv.lock)
 git clone https://github.com/hallettmiket/candescence.git
 cd candescence
-conda env create -f environment.yml
-conda activate candescence_new
+uv sync                 # add --all-extras for the dev + analysis tooling
 
 # 2. Use the bundled sample data (36 real colony images, no lab VM needed)
 cp candescence.sample.toml candescence.toml
 
-# 3. Launch
-nice -n 19 streamlit run src/candescence/interface/app.py
+# 3. Launch (uv run executes inside the project environment)
+nice -n 19 uv run streamlit run src/candescence/interface/app.py
 ```
 
 The app opens in your browser. The **TLV Explorer** projects colony images into
@@ -51,6 +50,7 @@ The [docs/tutorials/](docs/tutorials/) directory has step-by-step guides:
 | [01 Getting Started](docs/tutorials/01_getting_started.md) | Clone, install, first launch |
 | [02 Using Your Own Images](docs/tutorials/02_using_your_own_images.md) | Config, env vars, in-app picker |
 | [03 The Models](docs/tutorials/03_the_models.md) | Strategy 0 / 1 / 14; adjustment vs conditioning |
+| [04 The Diffusion Companion](docs/tutorials/04_diffusion.md) | Generate / reconstruct / interpolate with the conditional diffusion model |
 
 Deeper programmatic walkthroughs live in [`tutorials/`](tutorials/) as Jupyter
 notebooks.
@@ -123,7 +123,7 @@ candescence/
 Per lab convention, all Candescence processes should run under low CPU priority:
 
 ```bash
-nice -n 19 streamlit run src/candescence/interface/app.py
+nice -n 19 uv run streamlit run src/candescence/interface/app.py
 ```
 
 The training wizard enforces `nice 19` internally and uses at most 20 CPU cores

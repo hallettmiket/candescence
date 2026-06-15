@@ -10,7 +10,7 @@ Usage:
     python reproduce_37_tendrils.py [--train | --inference]
 
 Environment:
-    conda activate candescence_new
+    uv run python reproduce_37_tendrils.py ...   # or activate .venv first
 """
 
 import argparse

@@ -24,9 +24,9 @@ sample), and explore VAE latent spaces through an interactive app.
   across morphologies and growth media) plus `candescence.sample.toml` let you
   launch the app with no lab infrastructure:
   ```bash
-  conda env create -f environment.yml && conda activate candescence_new
+  uv sync
   cp candescence.sample.toml candescence.toml
-  streamlit run src/candescence/interface/app.py
+  uv run streamlit run src/candescence/interface/app.py
   ```
 
 - **Configurable data paths.** Every path resolves through a settings layer

@@ -1,6 +1,6 @@
 # Tutorial 01 — Getting Started with Candescence
 
-**What you'll do:** Clone the repository, set up the conda environment, launch the app,
+**What you'll do:** Clone the repository, set up the environment with uv, launch the app,
 and take your first look at a *Candida albicans* latent space by loading a **trained
 model** and projecting colony images through it.
 
@@ -13,7 +13,7 @@ model** and projecting colony images through it.
 
 ## Prerequisites
 
-- [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or Anaconda
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (installed in Step 2 if absent)
 - Git
 - A browser (the app opens one automatically)
 - Optional: an NVIDIA GPU (CPU-only works fine for the sample data)
@@ -32,22 +32,28 @@ unless otherwise stated.
 
 ---
 
-## Step 2 — Create the conda environment
+## Step 2 — Create the environment with uv
+
+Candescence uses [uv](https://docs.astral.sh/uv/) to manage its Python
+environment. If you don't have it yet:
 
 ```bash
-conda env create -f environment.yml
-conda activate candescence_new
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-This installs PyTorch, Streamlit, and all scientific dependencies listed in
-`environment.yml`. The environment name is `candescence_new`.
-
-Alternatively, if you already have a compatible Python 3.10 environment, you can
-install the package in editable mode instead:
+Then, from the repository root:
 
 ```bash
-pip install -e .
+uv sync                 # add --all-extras for the dev + analysis tooling
 ```
+
+This reads `pyproject.toml`/`uv.lock`, fetches Python 3.10, installs PyTorch
+(CUDA 11.8 build), Streamlit, and all scientific dependencies into a
+project-local `.venv`, and installs Candescence itself in editable mode. The
+lockfile pins exact versions, so every machine gets the same environment.
+
+Run commands inside the environment with `uv run <cmd>` (e.g.
+`uv run python ...`), or activate it once with `source .venv/bin/activate`.
 
 ---
 
@@ -84,8 +90,8 @@ print("Outputs:", s.refined_path)
 Expected output:
 
 ```
-Images : /path/to/candescence_new/data/sample/images
-Outputs: /path/to/candescence_new/_candescence_runs
+Images : /path/to/candescence/data/sample/images
+Outputs: /path/to/candescence/_candescence_runs
 ```
 
 ---
@@ -93,7 +99,7 @@ Outputs: /path/to/candescence_new/_candescence_runs
 ## Step 4 — Launch the app
 
 ```bash
-nice -n 19 streamlit run src/candescence/interface/app.py
+nice -n 19 uv run streamlit run src/candescence/interface/app.py
 ```
 
 > **Why `nice -n 19`?** Lab convention limits background processes to low CPU priority

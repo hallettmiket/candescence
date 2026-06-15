@@ -13,6 +13,7 @@ a fresh clone to trained models and interactive latent-space exploration of
 | 01 | [Getting Started](01_getting_started.md) | Clone, install, launch the app against bundled sample data |
 | 02 | [Using Your Own Images](02_using_your_own_images.md) | Point the app at a custom image directory via config, env vars, or the in-app picker |
 | 03 | [The Models](03_the_models.md) | Strategy 0 / 1 / 14 explained; adjustment vs. augmentation vs. conditioning |
+| 04 | [The Diffusion Companion](04_diffusion.md) | Generate, reconstruct, and interpolate colonies with the conditional diffusion model |
 
 ---
 
@@ -20,7 +21,8 @@ a fresh clone to trained models and interactive latent-space exploration of
 
 These notebooks live in [`tutorials/`](../../tutorials/) at the repository root and
 provide hands-on, code-level walkthroughs. They complement the step-by-step tutorials
-above but require a running `candescence_new` conda environment.
+above but require the notebook tooling: `uv sync --extra notebooks` (or
+`--all-extras`), then launch with `uv run jupyter lab`.
 
 | Notebook | What it covers |
 |---|---|
@@ -29,25 +31,26 @@ above but require a running `candescence_new` conda environment.
 | [`tutorial_tendril_vae.ipynb`](../../tutorials/tutorial_tendril_vae.ipynb) | Full Tendril VAE training and verification: `TLVConfig`, dataset loading, training loop, inference, latent analysis |
 | [`tutorial_production_workflow.ipynb`](../../tutorials/tutorial_production_workflow.ipynb) | End-to-end production run: configure paths, train, register model, run inference on new images |
 | [`tutorial_varasana_detection.ipynb`](../../tutorials/tutorial_varasana_detection.ipynb) | Colony detection with the Varasana object-detection pipeline |
+| [`tutorial_diffusion.ipynb`](../../tutorials/tutorial_diffusion.ipynb) | Conditional diffusion model: generate novel colonies, reconstruct, interpolate, and read semantic codes |
 
 ---
 
 ## Quick-start cheat sheet
 
 ```bash
-# 1. Install
-conda env create -f environment.yml && conda activate candescence_new
+# 1. Install (creates a project-local .venv from uv.lock)
+uv sync
 
 # 2. Sample data quickstart
 cp candescence.sample.toml candescence.toml
 
 # 3. Launch
-nice -n 19 streamlit run src/candescence/interface/app.py
+nice -n 19 uv run streamlit run src/candescence/interface/app.py
 
 # 4. Point at your own images
 export CANDESCENCE_IMAGES=/path/to/your/images
 export CANDESCENCE_REFINED=/path/to/outputs
-nice -n 19 streamlit run src/candescence/interface/app.py
+nice -n 19 uv run streamlit run src/candescence/interface/app.py
 ```
 
 ---
