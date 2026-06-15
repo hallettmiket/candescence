@@ -1,7 +1,7 @@
 # Candescence
 
-Deep-learning tools for exploring *Candida albicans* colony morphology through
-variational autoencoders (VAEs).
+Deep-learning tools for *Candida albicans* morphology analysis — latent-space
+exploration with VAEs (TLV) and cell detection with FCOS (Varasana, Grace).
 
 > **v2 — production release.** A ground-up production version: configurable data
 > paths, a curated model catalog (Strategy 0 / 1 / 14), an interactive Streamlit
@@ -41,6 +41,30 @@ immediately. On a fresh clone, first train a small model on the sample data with
 
 ---
 
+## Projects
+
+Candescence is organized into three projects that share one interface, model
+zoo, and data layer. The **Home** page launches into each:
+
+| Project | What it does | Method | Reference |
+|---|---|---|---|
+| **TLV** — Tendril Latent VAE | Latent-space exploration of colony morphology (+ diffusion companion) | VAEs (Strategy 0 / 1 / 14) | Harry's thesis (2026) |
+| **Varasana** | Detect & classify cells in microscopy images (15 morphologies) | FCOS detector | [Bettauer et al. 2022](https://doi.org/10.1128/spectrum.01472-22) |
+| **Grace** | Macrophage (9-class) & tissue-culture (7-class) cell classification | FCOS detectors | [Case, Westman et al. 2023](https://doi.org/10.1128/mbio.02745-23) |
+
+TLV runs on the modern PyTorch stack. **Varasana and Grace** are FCOS detectors
+on a pinned legacy MMDetection stack, run out-of-process in an isolated
+environment — build it once to enable detection:
+
+```bash
+bash src/candescence/detection/legacy/setup_legacy_env.sh
+```
+
+See [detection/legacy/README.md](src/candescence/detection/legacy/README.md) and
+tutorials [05](docs/tutorials/05_varasana.md) / [06](docs/tutorials/06_grace.md).
+
+---
+
 ## Tutorials
 
 The [docs/tutorials/](docs/tutorials/) directory has step-by-step guides:
@@ -51,6 +75,8 @@ The [docs/tutorials/](docs/tutorials/) directory has step-by-step guides:
 | [02 Using Your Own Images](docs/tutorials/02_using_your_own_images.md) | Config, env vars, in-app picker |
 | [03 The Models](docs/tutorials/03_the_models.md) | Strategy 0 / 1 / 14; adjustment vs conditioning |
 | [04 The Diffusion Companion](docs/tutorials/04_diffusion.md) | Generate / reconstruct / interpolate with the conditional diffusion model |
+| [05 Varasana Cell Detection](docs/tutorials/05_varasana.md) | Run the Varasana FCOS detector; overlay, counts, CSV |
+| [06 Grace Detection](docs/tutorials/06_grace.md) | Grace macro / TC detectors and side-by-side compare |
 
 Deeper programmatic walkthroughs live in [`tutorials/`](tutorials/) as Jupyter
 notebooks.

@@ -30,9 +30,10 @@ PUBLIC_STRATEGIES: tuple[int, ...] = (14, 1, 0)
 # Architecture names exposed to end users by default. Kept in sync with the
 # strategy->architecture mapping in ``candescence.tlv.factory._prepare_strategy``.
 # ``diffusion_vae`` is the ported conditional-diffusion model (inference-only in
-# the app for now; see candescence.tlv.diffusion).
+# the app for now; see candescence.tlv.diffusion). ``fcos_resnet101_fpn`` is the
+# detector architecture for the (now active) Varasana and Grace projects.
 PUBLIC_ARCHITECTURES: frozenset[str] = frozenset(
-    {"c_vae", "uc_vae", "tendril_vae", "diffusion_vae"}
+    {"c_vae", "uc_vae", "tendril_vae", "diffusion_vae", "fcos_resnet101_fpn"}
 )
 
 # Environment override: set truthy to default the app into research mode (all

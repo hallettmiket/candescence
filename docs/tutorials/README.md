@@ -14,6 +14,8 @@ a fresh clone to trained models and interactive latent-space exploration of
 | 02 | [Using Your Own Images](02_using_your_own_images.md) | Point the app at a custom image directory via config, env vars, or the in-app picker |
 | 03 | [The Models](03_the_models.md) | Strategy 0 / 1 / 14 explained; adjustment vs. augmentation vs. conditioning |
 | 04 | [The Diffusion Companion](04_diffusion.md) | Generate, reconstruct, and interpolate colonies with the conditional diffusion model |
+| 05 | [Varasana Cell Detection](05_varasana.md) | Run the Varasana FCOS detector: bounding-box overlay, per-class counts, CSV export |
+| 06 | [Grace Detection](06_grace.md) | Grace macro (9-class) / TC (7-class) detectors and side-by-side compare |
 
 ---
 

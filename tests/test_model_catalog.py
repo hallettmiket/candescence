@@ -19,7 +19,7 @@ from candescence.core import model_catalog as mc
 def test_public_tier_membership() -> None:
     assert set(mc.PUBLIC_STRATEGIES) == {0, 1, 14}
     assert mc.PUBLIC_ARCHITECTURES == frozenset(
-        {"c_vae", "uc_vae", "tendril_vae", "diffusion_vae"}
+        {"c_vae", "uc_vae", "tendril_vae", "diffusion_vae", "fcos_resnet101_fpn"}
     )
 
 
