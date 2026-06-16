@@ -1,5 +1,15 @@
 # Candescence New - Claude Code Documentation
 
+## Conventions
+
+- **CC** refers to **Claude Code** (this CLI agent) throughout this repo's docs.
+- **"Outstanding requests / jobs / tasks"** always means *this project's*
+  pending work, tracked in the project-specific memory file
+  `outstanding-jobs.md` (see the memory index `MEMORY.md`). It does **not**
+  mean the wigamig receptionist's cross-group SEA inbound queue. When asked to
+  "check / remember outstanding requests," CC reads and updates that project
+  memory file — scoped to candescence only.
+
 ## Project Overview
 
 **candescence_new** is an optimized and extended version of the Candescence project for *Candida albicans* morphology analysis. This repository builds upon candescence_master without modifying the original code.

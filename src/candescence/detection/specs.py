@@ -94,12 +94,12 @@ def legacy_detectors() -> List[DetectorSpec]:
 def modern_detectors() -> List[DetectorSpec]:
     """Modern (torchvision) detectors discovered from the model zoo."""
     from candescence.core.model_zoo import ModelZoo
-    from candescence.detection.modern.model import MODERN_ARCHITECTURE
+    from candescence.detection.modern.model import MODERN_ARCHITECTURES
 
     out: List[DetectorSpec] = []
     try:
         for entry in ModelZoo().list_models():
-            if entry.architecture == MODERN_ARCHITECTURE and entry.exists():
+            if entry.architecture in MODERN_ARCHITECTURES and entry.exists():
                 out.append(DetectorSpec(
                     key=entry.id, project=entry.project,
                     label=f"{entry.name} · modern", engine=ENGINE_MODERN,

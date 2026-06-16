@@ -4,7 +4,7 @@ Author: Hallett Lab
 Date: 2026-02-04
 
 Importable module containing the home page rendering logic.
-Used by both app.py (main entry point) and pages/0_Home.py (sidebar nav).
+Used by both app.py (main entry point) and pages/00_Home.py (sidebar nav).
 """
 
 from datetime import datetime

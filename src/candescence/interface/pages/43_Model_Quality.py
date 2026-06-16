@@ -10,7 +10,7 @@ Output: Reconstruction metrics, posterior-collapse / active-dimension
 
 Complements the interactive Latent Explorer (which is for deep, interactive
 exploration); this page is the quick "how good is this model?" summary.
-Diffusion models have their own page (6_TLV_Diffusion).
+Diffusion models have their own page (12_TLV_Diffusion).
 """
 
 from __future__ import annotations

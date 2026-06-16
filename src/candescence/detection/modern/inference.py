@@ -20,7 +20,11 @@ from PIL import Image
 
 from candescence.core.logging_config import get_logger
 from candescence.detection.inference.detector import Detection
-from candescence.detection.modern.model import build_fcos
+from candescence.detection.modern.model import (
+    MODERN_ARCHITECTURE,
+    backbone_for_architecture,
+    build_fcos,
+)
 
 logger = get_logger("candescence.detection.modern.inference")
 
@@ -43,8 +47,11 @@ def load_modern_model(checkpoint: PathLike,
     ckpt = torch.load(checkpoint, map_location=dev, weights_only=False)
     num_classes = int(ckpt["num_classes"])
     classes = list(ckpt.get("classes") or [str(i) for i in range(num_classes)])
+    # Rebuild the same backbone the checkpoint was trained with (resnet50 for
+    # checkpoints predating the resnet101 option, which lack/omit the field).
+    backbone = backbone_for_architecture(ckpt.get("architecture", MODERN_ARCHITECTURE))
 
-    model = build_fcos(num_classes, pretrained_backbone=False).to(dev)
+    model = build_fcos(num_classes, pretrained_backbone=False, backbone=backbone).to(dev)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     return LoadedModernModel(model=model, classes=classes, device=dev)

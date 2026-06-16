@@ -25,7 +25,7 @@ from candescence.detection.modern.dataset import (
     PickleDetectionDataset,
     collate_detection,
 )
-from candescence.detection.modern.model import MODERN_ARCHITECTURE, build_fcos
+from candescence.detection.modern.model import architecture_for_backbone, build_fcos
 
 logger = get_logger("candescence.detection.modern.trainer")
 
@@ -42,6 +42,7 @@ class TrainResult:
     checkpoint_path: str
     num_classes: int
     num_images: int
+    architecture: str = ""
     history: List[Dict] = field(default_factory=list)
 
 
@@ -59,6 +60,7 @@ def train_detector(
     device: Optional[str] = None,
     num_workers: int = 0,
     pretrained_backbone: bool = True,
+    backbone: str = "resnet50",
     progress: Optional[ProgressCallback] = None,
     should_stop: Optional[StopCallback] = None,
 ) -> TrainResult:
@@ -86,7 +88,10 @@ def train_detector(
         dataset, batch_size=batch_size, shuffle=True,
         collate_fn=collate_detection, num_workers=num_workers,
     )
-    model = build_fcos(n_classes, pretrained_backbone=pretrained_backbone).to(device)
+    architecture = architecture_for_backbone(backbone)
+    model = build_fcos(
+        n_classes, pretrained_backbone=pretrained_backbone, backbone=backbone
+    ).to(device)
     optimizer = torch.optim.SGD(
         [p for p in model.parameters() if p.requires_grad],
         lr=lr, momentum=0.9, weight_decay=1e-4,
@@ -134,7 +139,8 @@ def train_detector(
             "state_dict": model.state_dict(),
             "num_classes": n_classes,
             "classes": class_names or [str(i) for i in range(n_classes)],
-            "architecture": MODERN_ARCHITECTURE,
+            "architecture": architecture,
+            "backbone": backbone,
             "history": history,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "stopped_early": stopped,
@@ -146,5 +152,6 @@ def train_detector(
         checkpoint_path=str(checkpoint_path),
         num_classes=n_classes,
         num_images=len(dataset),
+        architecture=architecture,
         history=history,
     )

@@ -9,12 +9,27 @@ from candescence.detection.modern.inference import (
     detect,
     load_modern_model,
 )
-from candescence.detection.modern.model import MODERN_ARCHITECTURE, build_fcos
+from candescence.detection.modern.model import (
+    ARCHITECTURE_BY_BACKBONE,
+    MODERN_ARCHITECTURE,
+    MODERN_ARCHITECTURE_R101,
+    MODERN_ARCHITECTURES,
+    SUPPORTED_BACKBONES,
+    architecture_for_backbone,
+    backbone_for_architecture,
+    build_fcos,
+)
 from candescence.detection.modern.trainer import TrainResult, train_detector
 
 __all__ = [
     "PickleDetectionDataset",
     "MODERN_ARCHITECTURE",
+    "MODERN_ARCHITECTURE_R101",
+    "MODERN_ARCHITECTURES",
+    "ARCHITECTURE_BY_BACKBONE",
+    "SUPPORTED_BACKBONES",
+    "architecture_for_backbone",
+    "backbone_for_architecture",
     "build_fcos",
     "train_detector",
     "TrainResult",

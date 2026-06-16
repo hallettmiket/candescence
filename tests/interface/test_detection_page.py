@@ -12,9 +12,9 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 _PAGES = Path(__file__).resolve().parents[2] / "src" / "candescence" / "interface" / "pages"
-_VARASANA_PAGE = str(_PAGES / "8_Varasana_Detection.py")
-_GRACE_PAGE = str(_PAGES / "9_Grace_Detection.py")
-_TRAIN_PAGE = str(_PAGES / "10_Train_Detector.py")
+_VARASANA_PAGE = str(_PAGES / "20_Varasana_Detection.py")
+_GRACE_PAGE = str(_PAGES / "30_Grace_Detection.py")
+_TRAIN_PAGE = str(_PAGES / "40_Train_Detector.py")
 
 
 def test_varasana_detection_page_renders():

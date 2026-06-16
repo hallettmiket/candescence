@@ -6,16 +6,18 @@ Date: 2026-02-04
 This module provides page components for the unified Candescence interface.
 
 Pages follow Streamlit's multi-page app convention:
-- Files prefixed with numbers (0_, 1_, etc.) for ordering
+- Files prefixed with numbers for ordering, grouped by project: the tens digit is
+  the group (1x TLV, 2x Varasana, 3x Grace, 4x shared/cross-cutting), the units
+  digit orders within the group.
 - Automatically discovered by Streamlit when using pages/ folder
 
 Page Structure:
-- app.py (main entry): Home dashboard (via candescence.interface.home)
-- 1_TLV_Training.py: TLV VAE training interface
-- 2_TLV_Explorer.py: TLV latent space explorer
-- 3_Varasana_Training.py: FCOS object detection training
-- 4_Model_Registry.py: View all registered models
-- 5_Dataset_Manager.py: View all registered datasets
+- app.py (main entry) / 00_Home.py: Home dashboard (via candescence.interface.home)
+- 10_TLV_Training.py / 11_TLV_Explorer.py / 12_TLV_Diffusion.py: TLV (VAE) pages
+- 20_Varasana_Detection.py / 21_Varasana_Training.py: Varasana (detection) pages
+- 30_Grace_Detection.py: Grace (detection) page
+- 40_Train_Detector.py: train a modern (torchvision) detector
+- 41_Model_Registry.py / 42_Dataset_Manager.py / 43_Model_Quality.py: shared tools
 """
 
 from candescence.interface.home import render_home_page

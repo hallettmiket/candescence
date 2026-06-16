@@ -17,8 +17,8 @@ pytest.importorskip("streamlit")
 pytest.importorskip("torch")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-_DIFFUSION_PAGE = "src/candescence/interface/pages/6_TLV_Diffusion.py"
-_QUALITY_PAGE = "src/candescence/interface/pages/7_Model_Quality.py"
+_DIFFUSION_PAGE = "src/candescence/interface/pages/12_TLV_Diffusion.py"
+_QUALITY_PAGE = "src/candescence/interface/pages/43_Model_Quality.py"
 
 
 def test_diffusion_page_renders() -> None:

@@ -28,8 +28,8 @@ class ProjectPage:
     title:
         Human-readable page title shown on launcher cards.
     slug:
-        Streamlit page identifier (the page file stem, e.g. ``"1_TLV_Training"``),
-        used for navigation references.
+        Streamlit page identifier (the page file stem, e.g. ``"10_TLV_Training"``),
+        used for navigation references (e.g. ``"10_TLV_Training"``).
     description:
         One-line description of what the page does.
     icon:
@@ -97,15 +97,15 @@ _PROJECTS: Dict[str, Project] = {
         status="active",
         pages=[
             ProjectPage(
-                "TLV Training", "1_TLV_Training",
+                "TLV Training", "10_TLV_Training",
                 "Train Tendril VAE models for latent space analysis", "🧬",
             ),
             ProjectPage(
-                "TLV Explorer", "2_TLV_Explorer",
+                "TLV Explorer", "11_TLV_Explorer",
                 "Explore trained VAE latent spaces interactively", "🔍",
             ),
             ProjectPage(
-                "TLV Diffusion", "6_TLV_Diffusion",
+                "TLV Diffusion", "12_TLV_Diffusion",
                 "Generate, reconstruct, and interpolate with the diffusion "
                 "companion", "✨",
             ),
@@ -124,11 +124,11 @@ _PROJECTS: Dict[str, Project] = {
         "10.1128/spectrum.01472-22",
         pages=[
             ProjectPage(
-                "Varasana Detection", "8_Varasana_Detection",
+                "Varasana Detection", "20_Varasana_Detection",
                 "Detect & classify cells with the pretrained FCOS model", "🔬",
             ),
             ProjectPage(
-                "Varasana Training", "3_Varasana_Training",
+                "Varasana Training", "21_Varasana_Training",
                 "Train FCOS object detection models", "🎯",
             ),
         ],
@@ -145,7 +145,7 @@ _PROJECTS: Dict[str, Project] = {
         reference="Case, Westman et al. (2023) mBio, 10.1128/mbio.02745-23",
         pages=[
             ProjectPage(
-                "Grace Detection", "9_Grace_Detection",
+                "Grace Detection", "30_Grace_Detection",
                 "Detect & classify cells with the pretrained macro / TC models",
                 "🔬",
             ),
