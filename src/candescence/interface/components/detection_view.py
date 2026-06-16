@@ -23,7 +23,11 @@ from candescence.core.logging_config import get_logger
 from candescence.core.settings import get_settings
 from candescence.detection import service
 from candescence.detection.inference.detector import Detection
-from candescence.detection.specs import DetectorSpec
+from candescence.detection.specs import (
+    ENGINE_LEGACY,
+    DetectorSpec,
+    detectors_for_project,
+)
 from candescence.interface.core.components import render_image_source_picker
 from candescence.interface.core.theme import apply_theme, page_header
 
@@ -100,14 +104,23 @@ def legacy_env_ready() -> bool:
 
 
 def weights_ready(spec: DetectorSpec) -> bool:
-    """True if the detector's config + checkpoint exist; otherwise render an error."""
+    """True if the detector's weights (and, for legacy, config) exist; else error."""
     if spec.weights_available():
         return True
+    expected = f"- `{spec.checkpoint}`"
+    if spec.engine == ENGINE_LEGACY and spec.config is not None:
+        expected = f"- `{spec.config}`\n{expected}"
     st.error(
-        f"Model weights for **{spec.label}** were not found. Expected:\n\n"
-        f"- `{spec.config_path()}`\n- `{spec.checkpoint_path()}`"
+        f"Model weights for **{spec.label}** were not found. Expected:\n\n{expected}"
     )
     return False
+
+
+def detector_ready(spec: DetectorSpec) -> bool:
+    """Engine-aware readiness: legacy needs the isolated env; both need weights."""
+    if spec.engine == ENGINE_LEGACY and not legacy_env_ready():
+        return False
+    return weights_ready(spec)
 
 
 def threshold_slider(key: str) -> float:
@@ -116,8 +129,14 @@ def threshold_slider(key: str) -> float:
         st.subheader("Detection settings")
         value = st.slider("Score threshold", 0.05, 0.95, 0.30, 0.05, key=key,
                           help="Minimum confidence to keep a detection.")
-        st.caption("Runs on CPU (legacy stack) — a few seconds per image.")
     return value
+
+
+@st.cache_resource(show_spinner=False)
+def _load_modern_cached(checkpoint: str):
+    """Load + cache a modern detector (keyed by checkpoint path)."""
+    from candescence.detection.modern import load_modern_model
+    return load_modern_model(checkpoint)
 
 
 def pick_image(key_prefix: str, default_dir: str) -> Optional[str]:
@@ -136,14 +155,25 @@ def pick_image(key_prefix: str, default_dir: str) -> Optional[str]:
 
 def run_detector(spec: DetectorSpec, image_path: str,
                  score_thr: float) -> Optional[List[Detection]]:
-    """Run one detector via the legacy worker; render an error and return None on failure."""
+    """Run one detector and return detections; render an error and return None on failure.
+
+    Dispatches by engine: modern detectors run in-process (GPU when available);
+    legacy detectors run via the isolated mmdet worker.
+    """
     try:
+        if spec.is_modern:
+            from candescence.detection.modern import inference as modern_inference
+            with st.spinner(f"Running {spec.label} (in-process)…"):
+                loaded = _load_modern_cached(str(spec.checkpoint))
+                return modern_inference.detect(loaded, image_path, score_thr=score_thr)
         with st.spinner(f"Running {spec.label} on CPU…"):
             return service.detect_image(
-                spec.config_path(), spec.checkpoint_path(),
-                image_path, score_thr=score_thr,
+                spec.config, spec.checkpoint, image_path, score_thr=score_thr,
             )
     except service.LegacyWorkerError as exc:
+        st.error(f"Detection failed: {exc}")
+        return None
+    except Exception as exc:  # surface modern-inference errors too
         st.error(f"Detection failed: {exc}")
         return None
 
@@ -194,7 +224,7 @@ def render_detector_page(spec: DetectorSpec, *, icon: str = "🔬",
         apply_theme()
         page_header(spec.label, subproject=spec.project, icon=icon, description=intro)
 
-    if not legacy_env_ready() or not weights_ready(spec):
+    if not detector_ready(spec):
         return
 
     score_thr = threshold_slider(f"{spec.key}_thr")
@@ -216,7 +246,7 @@ def render_detector_page(spec: DetectorSpec, *, icon: str = "🔬",
 
 def render_compare(specs: Sequence[DetectorSpec], *, key_prefix: str) -> None:
     """Run several detectors on one image and show their results side by side."""
-    if not legacy_env_ready():
+    if any(s.engine == ENGINE_LEGACY for s in specs) and not legacy_env_ready():
         return
     ready = [s for s in specs if weights_ready(s)]
     if len(ready) < 2:
@@ -242,3 +272,29 @@ def render_compare(specs: Sequence[DetectorSpec], *, key_prefix: str) -> None:
                 st.markdown(f"**{spec.label}**")
                 render_results(spec, result["path"],
                                result["results"].get(spec.key, []), compact=True)
+
+
+def render_project_detection(project_id: str, *, icon: str = "🔬",
+                             intro: str = "", with_header: bool = True) -> None:
+    """Render a detection page for a project, letting the user pick among all of
+    its detectors — the frozen legacy model(s) and any modern ones trained in-app.
+    """
+    if with_header:
+        apply_theme()
+        page_header(project_id.capitalize() + " detection",
+                    subproject=project_id, icon=icon, description=intro)
+
+    specs = detectors_for_project(project_id)
+    if not specs:
+        st.info(f"No detectors registered for the {project_id} project yet.")
+        return
+
+    if len(specs) == 1:
+        spec = specs[0]
+        st.caption(f"Detector: **{spec.label}**")
+    else:
+        labels = [s.label for s in specs]
+        chosen = st.selectbox("Detector", labels, key=f"{project_id}_detector")
+        spec = specs[labels.index(chosen)]
+
+    render_detector_page(spec, with_header=False)

@@ -75,6 +75,14 @@ def test_build_fcos_num_classes():
     assert model.head.classification_head.num_classes == 7
 
 
+def test_train_rejects_too_few_classes(tmp_path):
+    """Fewer classes than the data contains raises a clear error (not a CUDA assert)."""
+    ann_pkl, img_dir = _make_dataset(tmp_path)  # labels {0, 1} -> 2 classes
+    with pytest.raises(ValueError, match="classes"):
+        train_detector(ann_pkl, img_dir, str(tmp_path / "m"),
+                       class_names=["only_one"], epochs=1)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(),
                     reason="GPU not available for the modern train+infer round trip")
 def test_train_and_infer_round_trip(tmp_path):

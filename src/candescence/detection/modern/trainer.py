@@ -73,6 +73,14 @@ def train_detector(
     # Prefer an explicit count, then the class-name list length (the full schema),
     # then the max label seen in the data (correct only on the full dataset).
     n_classes = num_classes or (len(class_names) if class_names else dataset.num_classes)
+    # Guard: a head with too few classes would otherwise fail with an opaque CUDA
+    # device-side assert when a label indexes past the classification head.
+    if n_classes < dataset.num_classes:
+        raise ValueError(
+            f"num_classes={n_classes} but the data contains labels up to "
+            f"{dataset.num_classes - 1} ({dataset.num_classes} classes). "
+            f"Provide at least {dataset.num_classes} class names (or num_classes)."
+        )
 
     loader = DataLoader(
         dataset, batch_size=batch_size, shuffle=True,

@@ -32,7 +32,7 @@ def test_grace_detection_page_renders():
 def test_grace_detection_compare_mode_renders():
     """Switching the Grace page to compare mode renders without error."""
     at = AppTest.from_file(_GRACE_PAGE, default_timeout=120).run()
-    at.radio(key="grace_mode").set_value("Compare both").run()
+    at.radio(key="grace_mode").set_value("Compare macro vs TC").run()
     assert not at.exception
 
 
