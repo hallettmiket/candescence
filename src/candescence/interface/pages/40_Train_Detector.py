@@ -22,6 +22,7 @@ from pathlib import Path
 import torch
 import streamlit as st
 
+from candescence.core.dataset_zoo import DatasetZoo
 from candescence.core.logging_config import get_logger
 from candescence.core.model_zoo import ModelZoo
 from candescence.core.morphology import CLASS_NAMES
@@ -38,14 +39,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-_DEFAULT_ANN = (
-    "/data/lab_vm/refined/candescence_master/projects/varasana/"
-    "train-data/train_hyphae.pkl"
-)
-_DEFAULT_IMG = (
-    "/data/lab_vm/refined/candescence_master/projects/varasana/train-data/train"
-)
-
 # How often (seconds) the page re-polls a running background job.
 _POLL_SECONDS = 0.7
 
@@ -59,6 +52,69 @@ _LAST_RESULT = "train_detector_result"
 def _parse_classes(text: str) -> list:
     parts = [p.strip() for chunk in text.splitlines() for p in chunk.split(",")]
     return [p for p in parts if p]
+
+
+def _detection_datasets() -> list:
+    """Registered datasets that can drive detection training (have a train pkl)."""
+    try:
+        return [
+            e for e in DatasetZoo().list_datasets()
+            if e.metadata.get("engine") == "detection" and e.metadata.get("train_pkl")
+        ]
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("dataset zoo unavailable: %s", exc)
+        return []
+
+
+def _default_paths() -> tuple:
+    """Seed (annotation pkl, image dir) from a registered detection dataset.
+
+    Prefers the Varasana curriculum set; falls back to any detection dataset, or
+    empty strings (no hard-coded paths — everything resolves through the zoo).
+    """
+    datasets = _detection_datasets()
+    entry = next((e for e in datasets if e.id == "varasana_curriculum"), None)
+    entry = entry or (datasets[0] if datasets else None)
+    if entry is None:
+        return "", ""
+    return entry.metadata.get("train_pkl", ""), entry.metadata.get("train_image_dir", "")
+
+
+def _render_dataset_picker(*, disabled: bool) -> None:
+    """Offer the project's detection datasets from the zoo and prefill the inputs.
+
+    Surfaces the right data for this analysis: only detection datasets (Varasana,
+    Grace) appear here — the TLV (VAE) datasets belong to the TLV pages instead.
+    """
+    datasets = _detection_datasets()
+    if not datasets:
+        st.caption("No detection datasets registered in the zoo yet — enter paths "
+                   "manually below, or run `scripts/populate_zoo.py`.")
+        return
+
+    labels = {e.id: f"{e.name} · {e.project}" for e in datasets}
+    col_pick, col_use = st.columns([4, 1])
+    pick = col_pick.selectbox(
+        "Load from a registered detection dataset",
+        ["—"] + [e.id for e in datasets],
+        format_func=lambda x: "—" if x == "—" else labels[x],
+        help="Detection datasets from the dataset zoo. Choosing one fills in the "
+             "annotation pickle, image directory, class names, and project below.",
+        disabled=disabled,
+    )
+    if pick != "—":
+        entry = DatasetZoo().get(pick)
+        if entry is not None:
+            st.caption(entry.description)
+        if col_use.button("Use dataset", use_container_width=True, disabled=disabled):
+            meta = entry.metadata if entry else {}
+            st.session_state["td_ann"] = meta.get("train_pkl", "")
+            st.session_state["td_img"] = meta.get("train_image_dir", "")
+            if entry and entry.classes:
+                st.session_state["td_classes"] = ", ".join(entry.classes)
+            if entry and entry.project in ("varasana", "grace", "tlv"):
+                st.session_state["td_project"] = entry.project
+            st.rerun()
 
 
 def main() -> None:
@@ -84,11 +140,20 @@ def main() -> None:
                 "can watch progress, stop it, or visit other pages.")
 
     st.subheader("Dataset")
-    ann_pkl = st.text_input("Annotation pickle (.pkl)", value=_DEFAULT_ANN)
-    img_dir = st.text_input("Image directory", value=_DEFAULT_IMG)
+    # Seed the editable fields once; the zoo picker (below) overwrites them on use.
+    default_ann, default_img = _default_paths()
+    st.session_state.setdefault("td_ann", default_ann)
+    st.session_state.setdefault("td_img", default_img)
+    st.session_state.setdefault("td_classes", ", ".join(CLASS_NAMES))
+    st.session_state.setdefault("td_project", "varasana")
+
+    _render_dataset_picker(disabled=running)
+
+    ann_pkl = st.text_input("Annotation pickle (.pkl)", key="td_ann")
+    img_dir = st.text_input("Image directory", key="td_img")
     classes_text = st.text_area(
         "Class names (comma/newline separated; order = label index)",
-        value=", ".join(CLASS_NAMES), height=80,
+        key="td_classes", height=80,
     )
     class_names = _parse_classes(classes_text)
     st.caption(f"{len(class_names)} classes")
@@ -116,7 +181,8 @@ def main() -> None:
     st.subheader("Output")
     o1, o2 = st.columns(2)
     model_id = o1.text_input("Model id", value="my_detector_v1")
-    project = o2.selectbox("Project", ["varasana", "grace", "tlv", "other"], index=0)
+    project = o2.selectbox(
+        "Project", ["varasana", "grace", "tlv", "other"], key="td_project")
     register = st.checkbox("Register in the model zoo when done", value=True)
 
     start = st.button("Start training", type="primary", disabled=running)

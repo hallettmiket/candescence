@@ -99,11 +99,43 @@ def _upload_staging_dir(key_prefix: str, *, create: bool = False) -> Path:
     return staging
 
 
+def _project_image_dirs(project: str) -> List[Dict[str, str]]:
+    """Return the registered image datasets for a project as picker options.
+
+    Each option is ``{"name", "dir", "description"}`` where ``dir`` is an existing
+    image directory (``image_dir``-format datasets, or the ``image_dir`` /
+    ``train_image_dir`` recorded in a dataset's metadata). Used to surface a
+    project's own datasets in its image-source picker.
+    """
+    try:
+        from candescence.core.dataset_zoo import DatasetZoo
+
+        entries = DatasetZoo().list_datasets(project=project)
+    except Exception:  # pragma: no cover - defensive
+        return []
+
+    options: List[Dict[str, str]] = []
+    for entry in entries:
+        image_dir = (
+            entry.path if entry.format == "image_dir"
+            else entry.metadata.get("image_dir")
+            or entry.metadata.get("train_image_dir")
+            or ""
+        )
+        if image_dir and Path(image_dir).is_dir():
+            options.append(
+                {"name": entry.name, "dir": str(image_dir),
+                 "description": entry.description}
+            )
+    return options
+
+
 def render_image_source_picker(
     *,
     key_prefix: str,
     default_dir: str,
     label: str = "Image source",
+    project: Optional[str] = None,
 ) -> str:
     """
     Render a "directory path" or "upload images" picker; return the chosen dir.
@@ -121,23 +153,46 @@ def render_image_source_picker(
         Pre-filled directory path for the "directory" mode.
     label : str
         Heading shown above the picker.
+    project : str, optional
+        When given, prepend a "Dataset zoo" mode listing that project's own
+        registered image datasets (e.g. the TLV corpus on the TLV pages), so the
+        right data surfaces for the right analysis.
 
     Returns
     -------
     str
-        The resolved directory path (the typed path, or the upload staging dir).
+        The resolved directory path (the typed path, the chosen dataset's image
+        directory, or the upload staging dir).
     """
     st.markdown(f"**{label}**")
+    zoo_options = _project_image_dirs(project) if project else []
+    modes = (["Dataset zoo"] if zoo_options else []) + [
+        "Directory path", "Upload images"]
     mode = st.radio(
         "Provide images by",
-        options=["Directory path", "Upload images"],
+        options=modes,
         horizontal=True,
         key=f"{key_prefix}_source_mode",
         help=(
             "Point at a folder of images, or upload your own. Uploaded files are "
             "staged under the refined data tree (never the read-only raw tree)."
+            + (" 'Dataset zoo' lists this project's registered datasets."
+               if zoo_options else "")
         ),
     )
+
+    if mode == "Dataset zoo":
+        names = [opt["name"] for opt in zoo_options]
+        idx = st.selectbox(
+            f"{(project or '').upper()} dataset",
+            options=list(range(len(zoo_options))),
+            format_func=lambda i: names[i],
+            key=f"{key_prefix}_zoo",
+        )
+        chosen = zoo_options[idx]
+        if chosen["description"]:
+            st.caption(chosen["description"])
+        return chosen["dir"]
 
     if mode == "Directory path":
         return st.text_input(

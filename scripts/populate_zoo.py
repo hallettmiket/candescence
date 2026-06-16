@@ -18,10 +18,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from candescence.core.model_zoo import ModelZoo
 from candescence.core.dataset_zoo import DatasetZoo
-from candescence.core.settings import get_settings
+from candescence.core.settings import get_settings, legacy_refined_root
 
-# Refined-data root, resolved from the settings layer (env / config / default).
-REFINED = get_settings().refined_path
+# Resolved from the settings layer (env / config / default).
+SETTINGS = get_settings()
+REFINED = SETTINGS.refined_path
+# Root holding the legacy candescence_master tree (Varasana/Grace source data).
+LEGACY_GRACE = legacy_refined_root() / "candescence_master/projects/grace/train-data"
+
+# Authoritative class names, read from the production checkpoints' ``meta.CLASSES``.
+# TLV is a VAE project (no detection labels) — its images map to the 6 morphology
+# grades the platform classifies.
+TLV_GRADES = ["white", "opaque", "gray", "shmoo", "pseudohyphae", "hyphae"]
+GRACE_MACRO_CLASSES = ["0", "1", "2", "time", "unknown", "artifact", "3",
+                       "macrophage", "UFO"]
+GRACE_TC_CLASSES = ["c0", "c1", "c2", "time", "unknown", "artifact", "c3"]
 
 
 def populate_models() -> None:
@@ -154,6 +165,13 @@ def populate_datasets() -> None:
             "annotation_format": "pkl",
             "curriculum_stages": ["white", "opaque", "gray", "shmoo", "pseudohyphae", "hyphae"],
             "image_dir": str(REFINED / "varasana_data/images"),
+            # Detection-training hints (read by the modern Train Detector page to
+            # pre-fill its inputs). ``train_hyphae.pkl`` is the full 15-class set.
+            "engine": "detection",
+            "train_pkl": str(REFINED / "varasana_data/curriculum/train_hyphae.pkl"),
+            "val_pkl": str(REFINED / "varasana_data/curriculum/val_hyphae.pkl"),
+            "train_image_dir": str(REFINED / "varasana_data/images"),
+            "num_classes": 15,
         },
     )
 
@@ -193,6 +211,101 @@ def populate_datasets() -> None:
         metadata={
             "annotation_format": "labelbox_json",
             "file": "varasana.json",
+        },
+    )
+
+    # 4. TLV colony image corpus (the VAE training images)
+    zoo.register(
+        dataset_id="tlv_images",
+        name="TLV Colony Image Corpus",
+        project="tlv",
+        path=SETTINGS.image_dir,
+        num_samples=50880,
+        splits={"all": 50880},
+        format="image_dir",
+        classes=TLV_GRADES,
+        description=(
+            "The TLV image corpus was originally developed for the TLV "
+            "(Tendril Latent VAE) project — Candida albicans colony microscopy "
+            "images (BMP) used to train the variational autoencoders and the "
+            "diffusion companion. Unlabelled for detection; conditioning "
+            "variables (e.g. average_hue) are derived from the images."
+        ),
+        metadata={
+            "image_format": "bmp",
+            "engine": "vae",
+            "metadata_xlsx": str(SETTINGS.metadata_xlsx),
+        },
+    )
+
+    # 5. TLV manually-labelled morphologies (the supervised subset)
+    zoo.register(
+        dataset_id="tlv_manual_labels",
+        name="TLV Manually-Labelled Morphologies",
+        project="tlv",
+        path=SETTINGS.manual_labels_csv,
+        num_samples=34176,
+        splits={"labelled": 34176},
+        format="csv_labels",
+        classes=TLV_GRADES,
+        description=(
+            "Hand-labelled morphology grades for TLV colony images "
+            "(file_name, morphology). Originally produced for the TLV project to "
+            "validate VAE latent structure and to condition/evaluate the models "
+            "against the 6 morphology grades."
+        ),
+        metadata={"engine": "vae", "label_column": "morphology"},
+    )
+
+    # 6. Grace macro detection data (9-class)
+    zoo.register(
+        dataset_id="grace_macro",
+        name="Grace Macro Detection Data (9-class)",
+        project="grace",
+        path=LEGACY_GRACE / "grace_macro",
+        num_samples=82,
+        splits={"train": 57, "val": 25},
+        format="curriculum_pkl",
+        classes=GRACE_MACRO_CLASSES,
+        description=(
+            "The Grace macro dataset was originally developed for the Grace macro "
+            "FCOS classifier (Case, Westman et al. 2023, mBio; Cowen Lab) — "
+            "9-class macrophage-interaction morphology detection. Per-image "
+            "bounding boxes in PKL format (train/val), 800x800 BMP frames."
+        ),
+        metadata={
+            "engine": "detection",
+            "annotation_format": "pkl",
+            "train_pkl": str(LEGACY_GRACE / "grace_macro/train_grace_macro.pkl"),
+            "val_pkl": str(LEGACY_GRACE / "grace_macro/val_grace_macro.pkl"),
+            "train_image_dir": str(LEGACY_GRACE / "grace_macro/train"),
+            "num_classes": 9,
+        },
+    )
+
+    # 7. Grace TC (tissue-culture) detection data (7-class)
+    zoo.register(
+        dataset_id="grace_tc",
+        name="Grace TC Detection Data (7-class)",
+        project="grace",
+        path=LEGACY_GRACE / "grace_tc",
+        num_samples=98,
+        splits={"train": 71, "val": 27},
+        format="curriculum_pkl",
+        classes=GRACE_TC_CLASSES,
+        description=(
+            "The Grace TC dataset was originally developed for the Grace "
+            "tissue-culture FCOS classifier (Case, Westman et al. 2023, mBio; "
+            "Cowen Lab) — 7-class cell-level morphology detection. Per-image "
+            "bounding boxes in PKL format (train/val), 800x800 BMP frames."
+        ),
+        metadata={
+            "engine": "detection",
+            "annotation_format": "pkl",
+            "train_pkl": str(LEGACY_GRACE / "grace_tc/train_grace_tc.pkl"),
+            "val_pkl": str(LEGACY_GRACE / "grace_tc/val_grace_tc.pkl"),
+            "train_image_dir": str(LEGACY_GRACE / "grace_tc/train"),
+            "num_classes": 7,
         },
     )
 

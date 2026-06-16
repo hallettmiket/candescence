@@ -160,7 +160,8 @@ def main() -> None:
     with tab_rec:
         st.markdown("Encode a real colony to its semantic code, then regenerate it.")
         rec_dir = render_image_source_picker(
-            key_prefix="diff_rec", default_dir=str(_settings.image_dir), label="Images"
+            key_prefix="diff_rec", default_dir=str(_settings.image_dir),
+            label="Images", project="tlv",
         )
         files = _list_images(rec_dir, 200)
         if not files:
@@ -183,7 +184,8 @@ def main() -> None:
     with tab_interp:
         st.markdown("Walk through semantic-code space between two colonies.")
         int_dir = render_image_source_picker(
-            key_prefix="diff_int", default_dir=str(_settings.image_dir), label="Images"
+            key_prefix="diff_int", default_dir=str(_settings.image_dir),
+            label="Images", project="tlv",
         )
         files = _list_images(int_dir, 200)
         if len(files) >= 2:
@@ -206,7 +208,8 @@ def main() -> None:
     with tab_latent:
         st.markdown("Encode a set of colonies and project their 32-d semantic codes to 2-D.")
         lat_dir = render_image_source_picker(
-            key_prefix="diff_lat", default_dir=str(_settings.image_dir), label="Images"
+            key_prefix="diff_lat", default_dir=str(_settings.image_dir),
+            label="Images", project="tlv",
         )
         max_n = st.slider("Max images", 20, 400, 120, key="lat_n")
         if st.button("Encode + project", type="primary", key="lat_btn"):

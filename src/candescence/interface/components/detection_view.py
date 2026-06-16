@@ -139,10 +139,12 @@ def _load_modern_cached(checkpoint: str):
     return load_modern_model(checkpoint)
 
 
-def pick_image(key_prefix: str, default_dir: str) -> Optional[str]:
+def pick_image(key_prefix: str, default_dir: str,
+               project: Optional[str] = None) -> Optional[str]:
     """Render the image-source picker + selector; return the chosen image path."""
     image_dir = render_image_source_picker(
-        key_prefix=f"{key_prefix}_img", default_dir=default_dir, label="Image source",
+        key_prefix=f"{key_prefix}_img", default_dir=default_dir,
+        label="Image source", project=project,
     )
     files = _list_images(image_dir)
     if not files:
@@ -228,7 +230,7 @@ def render_detector_page(spec: DetectorSpec, *, icon: str = "🔬",
         return
 
     score_thr = threshold_slider(f"{spec.key}_thr")
-    image_path = pick_image(spec.key, str(get_settings().image_dir))
+    image_path = pick_image(spec.key, str(get_settings().image_dir), project=spec.project)
     if image_path is None:
         return
 
@@ -253,7 +255,8 @@ def render_compare(specs: Sequence[DetectorSpec], *, key_prefix: str) -> None:
         return
 
     score_thr = threshold_slider(f"{key_prefix}_thr")
-    image_path = pick_image(key_prefix, str(get_settings().image_dir))
+    image_path = pick_image(key_prefix, str(get_settings().image_dir),
+                            project=ready[0].project)
     if image_path is None:
         return
 

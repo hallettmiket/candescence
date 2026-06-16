@@ -503,6 +503,7 @@ def _render_data_config():
             key_prefix="train_img",
             default_dir=DEFAULT_IMAGE_DIR,
             label="Training images",
+            project="tlv",
         )
         st.session_state["cfg_image_dir"] = image_dir
 

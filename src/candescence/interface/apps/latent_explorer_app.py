@@ -1158,6 +1158,7 @@ def _render_model_loader():
         key_prefix="explorer_img",
         default_dir=str(_settings.image_dir),
         label="Image source",
+        project="tlv",
     )
 
     # Metadata path
