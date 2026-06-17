@@ -21,13 +21,6 @@ from candescence.interface.components.detection_view import (
 )
 from candescence.interface.core.theme import apply_theme, page_header
 
-st.set_page_config(
-    page_title="Grace Detection | Candescence",
-    page_icon="🔬",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 _SINGLE = "Single detector"
 _COMPARE = "Compare macro vs TC"
 

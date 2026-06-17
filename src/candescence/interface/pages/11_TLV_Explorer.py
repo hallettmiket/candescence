@@ -13,13 +13,6 @@ Launch via unified interface:
 import streamlit as st
 
 # Page configuration
-st.set_page_config(
-    page_title="TLV Explorer | Candescence",
-    page_icon="🔍",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 # Import and run the explorer app main function
 from candescence.interface.apps.latent_explorer_app import main as explorer_main
 

@@ -62,13 +62,6 @@ from candescence.core.dataset_zoo import DatasetZoo
 logger = get_logger("candescence.interface.pages.varasana_training")
 
 # Page configuration
-st.set_page_config(
-    page_title="Varasana Training | Candescence",
-    page_icon="🎯",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 
 # =============================================================================
 # Constants and Tooltips

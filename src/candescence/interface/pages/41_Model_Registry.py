@@ -28,13 +28,6 @@ from candescence.interface.core.components import (
 )
 
 # Page configuration
-st.set_page_config(
-    page_title="Model Registry | Candescence",
-    page_icon="📦",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 
 def main() -> None:
     """Main application entry point."""

@@ -13,13 +13,6 @@ Launch via unified interface:
 import streamlit as st
 
 # Page configuration
-st.set_page_config(
-    page_title="TLV Training | Candescence",
-    page_icon="🧬",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 # Import and run the training app main function
 # We import here to avoid circular imports and ensure page config is set first
 from candescence.interface.apps.training_app import main as training_main

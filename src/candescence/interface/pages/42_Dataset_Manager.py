@@ -23,13 +23,6 @@ from candescence.core.settings import get_settings
 _settings = get_settings()
 
 # Page configuration
-st.set_page_config(
-    page_title="Dataset Manager | Candescence",
-    page_icon="📁",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 
 def _get_project_color(project: str) -> str:
     """Get theme color for a project (delegates to the project registry)."""

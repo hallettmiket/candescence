@@ -15,13 +15,6 @@ import streamlit as st
 
 from candescence.interface.components.detection_view import render_project_detection
 
-st.set_page_config(
-    page_title="Varasana Detection | Candescence",
-    page_icon="🔬",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 
 def main() -> None:
     render_project_detection(

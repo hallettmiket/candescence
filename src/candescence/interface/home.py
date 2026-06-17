@@ -205,11 +205,13 @@ def _render_models_overview() -> None:
             with col3:
                 st.metric("Production", counts.get("production", 0))
 
-        # Show latest models
-        all_models = zoo.list_models()
+        # Show all models, grouped by project (type) then name.
+        all_models = sorted(
+            zoo.list_models(), key=lambda e: (e.project.lower(), e.name.lower())
+        )
         if all_models:
             with st.expander("All Models", expanded=False):
-                for entry in all_models[:10]:
+                for entry in all_models:
                     _render_model_row(entry)
 
     except Exception as e:
@@ -277,11 +279,13 @@ def _render_datasets_overview() -> None:
             with col3:
                 st.metric("Samples", f"{total_samples:,}")
 
-        # Show datasets list
-        all_datasets = zoo.list_datasets()
+        # Show all datasets, grouped by project (type) then name.
+        all_datasets = sorted(
+            zoo.list_datasets(), key=lambda d: (d.project.lower(), d.name.lower())
+        )
         if all_datasets:
             with st.expander("All Datasets", expanded=False):
-                for ds in all_datasets[:10]:
+                for ds in all_datasets:
                     _render_dataset_row(ds)
 
     except Exception as e:

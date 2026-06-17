@@ -195,26 +195,7 @@ def populate_datasets() -> None:
         },
     )
 
-    # 3. Varasana full annotations
-    zoo.register(
-        dataset_id="varasana_annotations",
-        name="Varasana Labelbox Annotations",
-        project="varasana",
-        path=REFINED / "varasana_data/annotations",
-        num_samples=0,  # Annotation file, not directly countable
-        format="labelbox_json",
-        classes=morphology_classes,
-        description=(
-            "Original Labelbox annotations (varasana.json) containing bounding box "
-            "coordinates and morphology labels for detection training."
-        ),
-        metadata={
-            "annotation_format": "labelbox_json",
-            "file": "varasana.json",
-        },
-    )
-
-    # 4. TLV colony image corpus (the VAE training images)
+    # 3. TLV colony image corpus (the VAE training images)
     zoo.register(
         dataset_id="tlv_images",
         name="TLV Colony Image Corpus",
@@ -238,7 +219,7 @@ def populate_datasets() -> None:
         },
     )
 
-    # 5. TLV manually-labelled morphologies (the supervised subset)
+    # 4. TLV manually-labelled morphologies (the supervised subset)
     zoo.register(
         dataset_id="tlv_manual_labels",
         name="TLV Manually-Labelled Morphologies",
@@ -257,21 +238,22 @@ def populate_datasets() -> None:
         metadata={"engine": "vae", "label_column": "morphology"},
     )
 
-    # 6. Grace macro detection data (9-class)
+    # 5. Grace macro detection data (9-class)
     zoo.register(
         dataset_id="grace_macro",
         name="Grace Macro Detection Data (9-class)",
         project="grace",
         path=LEGACY_GRACE / "grace_macro",
-        num_samples=82,
-        splits={"train": 57, "val": 25},
+        num_samples=6796,
+        splits={"train": 57, "val": 25, "test": 6714},
         format="curriculum_pkl",
         classes=GRACE_MACRO_CLASSES,
         description=(
             "The Grace macro dataset was originally developed for the Grace macro "
             "FCOS classifier (Case, Westman et al. 2023, mBio; Cowen Lab) — "
-            "9-class macrophage-interaction morphology detection. Per-image "
-            "bounding boxes in PKL format (train/val), 800x800 BMP frames."
+            "9-class macrophage-interaction morphology detection. 800x800 BMP "
+            "frames: 57 train + 25 val are bounding-box annotated (PKL); the "
+            "test split is a large held-out evaluation set of 6,714 images."
         ),
         metadata={
             "engine": "detection",
@@ -279,25 +261,27 @@ def populate_datasets() -> None:
             "train_pkl": str(LEGACY_GRACE / "grace_macro/train_grace_macro.pkl"),
             "val_pkl": str(LEGACY_GRACE / "grace_macro/val_grace_macro.pkl"),
             "train_image_dir": str(LEGACY_GRACE / "grace_macro/train"),
+            "test_image_dir": str(LEGACY_GRACE / "grace_macro/test"),
             "num_classes": 9,
         },
     )
 
-    # 7. Grace TC (tissue-culture) detection data (7-class)
+    # 6. Grace TC (tissue-culture) detection data (7-class)
     zoo.register(
         dataset_id="grace_tc",
         name="Grace TC Detection Data (7-class)",
         project="grace",
         path=LEGACY_GRACE / "grace_tc",
-        num_samples=98,
-        splits={"train": 71, "val": 27},
+        num_samples=6713,
+        splits={"train": 65, "val": 27, "test": 6621},
         format="curriculum_pkl",
         classes=GRACE_TC_CLASSES,
         description=(
             "The Grace TC dataset was originally developed for the Grace "
             "tissue-culture FCOS classifier (Case, Westman et al. 2023, mBio; "
-            "Cowen Lab) — 7-class cell-level morphology detection. Per-image "
-            "bounding boxes in PKL format (train/val), 800x800 BMP frames."
+            "Cowen Lab) — 7-class cell-level morphology detection. 800x800 BMP "
+            "frames: 65 train + 27 val are bounding-box annotated (PKL); the "
+            "test split is a large held-out evaluation set of 6,621 images."
         ),
         metadata={
             "engine": "detection",
@@ -305,6 +289,7 @@ def populate_datasets() -> None:
             "train_pkl": str(LEGACY_GRACE / "grace_tc/train_grace_tc.pkl"),
             "val_pkl": str(LEGACY_GRACE / "grace_tc/val_grace_tc.pkl"),
             "train_image_dir": str(LEGACY_GRACE / "grace_tc/train"),
+            "test_image_dir": str(LEGACY_GRACE / "grace_tc/test"),
             "num_classes": 7,
         },
     )

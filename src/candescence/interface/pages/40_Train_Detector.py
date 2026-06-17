@@ -32,13 +32,6 @@ from candescence.interface.core.training_jobs import start_training_job
 
 logger = get_logger("candescence.interface.train_detector")
 
-st.set_page_config(
-    page_title="Train Detector | Candescence",
-    page_icon="🧪",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 # How often (seconds) the page re-polls a running background job.
 _POLL_SECONDS = 0.7
 
