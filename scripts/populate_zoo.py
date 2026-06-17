@@ -25,6 +25,12 @@ SETTINGS = get_settings()
 REFINED = SETTINGS.refined_path
 # Root holding the legacy candescence_master tree (Varasana/Grace source data).
 LEGACY_GRACE = legacy_refined_root() / "candescence_master/projects/grace/train-data"
+# The published Varasana FastGAN (generator weights + training crops).
+VARASANA_GAN = legacy_refined_root() / "candescence_master/projects/varasana_GAN"
+
+# Morphology classes spanned by the Varasana GAN's single-cell training crops.
+GAN_CLASSES = ["Budding Gray", "Budding Opaque", "Budding White", "Hyphae",
+               "Pseudohyphae", "Shmoo", "Yeast Gray", "Yeast Opaque", "Yeast White"]
 
 # Authoritative class names, read from the production checkpoints' ``meta.CLASSES``.
 # TLV is a VAE project (no detection labels) — its images map to the 6 morphology
@@ -127,6 +133,28 @@ def populate_models() -> None:
             "collaboration. FCOS-based detection for colony morphology."
         ),
         tags=["fcos", "detection", "grace", "cowen_lab", "macro_classification"],
+    )
+
+    # 5. Varasana FastGAN (production) — synthetic single-cell image generator
+    zoo.register(
+        model_id="varasana_fastgan",
+        name="Varasana FastGAN v1",
+        project="varasana",
+        model_type="production",
+        version="1.0",
+        architecture="fastgan",
+        checkpoint="model.pth",
+        config_file="",
+        path=VARASANA_GAN,
+        description=(
+            "Unconditional FastGAN (Liu et al. 2021) trained on 886 single-cell "
+            "Candida albicans crops across 9 morphology classes. Synthesises "
+            "256x256 cell images from random latent vectors — developed for data "
+            "augmentation of the Varasana detector."
+        ),
+        tags=["gan", "fastgan", "generative", "varasana", "augmentation"],
+        training_config={"nz": 256, "im_size": 256, "ngf": 64, "nc": 3,
+                         "num_train_images": 886},
     )
 
     print(f"Registered {len(zoo)} models in zoo")
@@ -292,6 +320,26 @@ def populate_datasets() -> None:
             "test_image_dir": str(LEGACY_GRACE / "grace_tc/test"),
             "num_classes": 7,
         },
+    )
+
+    # 7. Varasana GAN training crops (single-cell images, 9 morphology classes)
+    zoo.register(
+        dataset_id="varasana_gan_images",
+        name="Varasana GAN Training Crops",
+        project="varasana",
+        path=VARASANA_GAN / "images",
+        num_samples=886,
+        splits={"train": 886},
+        format="image_dir",
+        classes=GAN_CLASSES,
+        description=(
+            "The 886 single-cell Candida albicans crops (128x128 grayscale, "
+            "9 morphology classes) the Varasana FastGAN was trained on. Cropped "
+            "from the Varasana detection frames; used to train the synthetic-image "
+            "generator for data augmentation."
+        ),
+        metadata={"engine": "generative", "image_format": "png",
+                  "image_dir": str(VARASANA_GAN / "images")},
     )
 
     print(f"Registered {len(zoo)} datasets in zoo")

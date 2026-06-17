@@ -27,6 +27,7 @@ def test_public_tier_membership() -> None:
             "fcos_resnet101_fpn",
             "fcos_resnet50_fpn_torchvision",
             "fcos_resnet101_fpn_torchvision",
+            "fastgan",
         }
     )
 

@@ -131,6 +131,10 @@ _PROJECTS: Dict[str, Project] = {
                 "Varasana Training", "21_Varasana_Training",
                 "Train FCOS object detection models", "🎯",
             ),
+            ProjectPage(
+                "Varasana Generator", "22_Varasana_Generator",
+                "Synthesise single-cell images with the FastGAN", "🧫",
+            ),
         ],
     ),
     "grace": Project(

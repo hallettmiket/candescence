@@ -33,6 +33,7 @@ PUBLIC_STRATEGIES: tuple[int, ...] = (14, 1, 0)
 # the app for now; see candescence.tlv.diffusion). ``fcos_resnet101_fpn`` is the
 # legacy (mmdet) detector architecture for the Varasana and Grace projects; the
 # ``*_torchvision`` strings are the modern in-app FCOS detectors (resnet50/101).
+# ``fastgan`` is the Varasana synthetic-image generator (candescence.generative).
 PUBLIC_ARCHITECTURES: frozenset[str] = frozenset(
     {
         "c_vae",
@@ -42,6 +43,7 @@ PUBLIC_ARCHITECTURES: frozenset[str] = frozenset(
         "fcos_resnet101_fpn",
         "fcos_resnet50_fpn_torchvision",
         "fcos_resnet101_fpn_torchvision",
+        "fastgan",
     }
 )
 

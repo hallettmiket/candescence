@@ -77,6 +77,7 @@ The [docs/tutorials/](docs/tutorials/) directory has step-by-step guides:
 | [04 The Diffusion Companion](docs/tutorials/04_diffusion.md) | Generate / reconstruct / interpolate with the conditional diffusion model |
 | [05 Varasana Cell Detection](docs/tutorials/05_varasana.md) | Run the Varasana FCOS detector; overlay, counts, CSV |
 | [06 Grace Detection](docs/tutorials/06_grace.md) | Grace macro / TC detectors and side-by-side compare |
+| [07 Varasana Generator](docs/tutorials/07_varasana_generator.md) | Synthesise single-cell images with the FastGAN; sample, interpolate, export |
 
 Deeper programmatic walkthroughs live in [`tutorials/`](tutorials/) as Jupyter
 notebooks.

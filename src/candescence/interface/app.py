@@ -42,6 +42,7 @@ navigation = st.navigation(
         "Varasana — cell detection": [
             st.Page("pages/20_Varasana_Detection.py", title="Detection", icon="🔬"),
             st.Page("pages/21_Varasana_Training.py", title="Training", icon="🎯"),
+            st.Page("pages/22_Varasana_Generator.py", title="Generator", icon="🧫"),
         ],
         "Grace — cell detection": [
             st.Page("pages/30_Grace_Detection.py", title="Detection", icon="🔬"),
