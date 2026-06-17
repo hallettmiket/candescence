@@ -175,7 +175,7 @@ def render_image_source_picker(
         key=f"{key_prefix}_source_mode",
         help=(
             "Point at a folder of images, or upload your own. Uploaded files are "
-            "staged under the refined data tree (never the read-only raw tree)."
+            "saved to a private workspace folder, never to the shared image archive."
             + (" 'Dataset zoo' lists this project's registered datasets."
                if zoo_options else "")
         ),

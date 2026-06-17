@@ -39,6 +39,7 @@ from candescence.interface.core.components import (
     render_research_mode_toggle,
     research_mode_enabled,
 )
+from candescence.interface.core.theme import page_header
 
 _settings = get_settings()
 
@@ -821,7 +822,7 @@ LOGO_PATH = Path(__file__).parent.parent.parent.parent.parent / "assets" / "cand
 # Page configuration must be first - only when run standalone (not when imported by multipage app)
 if __name__ == "__main__":
     st.set_page_config(
-        page_title="Candescence Latent Space Explorer",
+        page_title="TLV Explorer",
         page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else "🔬",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -830,26 +831,25 @@ if __name__ == "__main__":
 
 def main():
     """Main application entry point."""
-    # Display logo and title
-    col_logo, col_title = st.columns([1, 4])
-    with col_logo:
-        if LOGO_PATH.exists():
-            st.image(str(LOGO_PATH), width=240)
-    with col_title:
-        st.title("Candescence Latent Space Explorer")
+    # Header matches the left-menu item ("TLV Explorer"), with TLV branding.
+    page_header(
+        "TLV Explorer",
+        subproject="tlv",
+        icon="🔬",
+        description="Explore trained TLV (Tendril Latent VAE) latent spaces "
+        "interactively.",
+    )
 
     # Initialize session state
     _init_session_state()
 
-    # Sidebar: Data loading
-    with st.sidebar:
-        _render_data_loader()
-
-    # Main content
+    # Main content. Before any data is loaded, the whole setup experience lives
+    # in the main window (the cramped sidebar made parameters unreadable); once
+    # loaded, the explorer manages its own controls.
     if st.session_state.data_loaded:
         _render_explorer()
     else:
-        _render_welcome()
+        _render_entry()
 
 
 def _init_session_state():
@@ -910,138 +910,195 @@ def _init_session_state():
             st.session_state[key] = default
 
 
-def _render_welcome():
-    """Render welcome page when no data is loaded."""
-    st.markdown("""
-    ## Welcome to the Interactive Latent Space Explorer
+def _render_entry():
+    """Render the main-window setup screen shown before any data is loaded.
 
-    This application allows you to interactively explore the latent spaces
-    of trained Candescence VAE models.
+    Two clear steps — pick a model, pick a dataset — plus a one-click button that
+    loads Harry's thesis defaults (TLV Colony Image Corpus + newest Tendril VAE).
+    Developer-grade loaders (inference objects, NPZ archives, demo data) are
+    tucked behind an "Advanced" expander so they don't clutter the common path.
+    """
+    st.markdown(
+        "Pick a **model** and a **dataset**, then load. New here? Use the "
+        "one-click defaults."
+    )
 
-    ### Features
-
-    - **Click on data points**: View the corresponding real image
-    - **Click on empty space**: Decode from that 2D position using k-NN weighted interpolation
-    - **Select two points**: View both images and an interpolation transition between them
-    - **Multiple projections**: UMAP, t-SNE, or PCA
-    - **Color by attributes**: Visualize metadata like hue, saturation, colony size
-
-    ### Getting Started
-
-    1. Use the sidebar to load your data (inference object, embeddings, or model)
-    2. Click on the scatter plot to explore!
-    3. Click "Clear Selection" to start fresh
-
-    ### Data Requirements
-
-    - Pre-computed embeddings (from inference object or .npz file)
-    - Original images (for displaying real images and setting skip connections)
-    - Conditioning values (optional, for conditioned VAEs)
-    - Trained model (optional, for decoding from empty space)
-    """)
+    # --- One-click startup (Harry's thesis setup) --------------------------- #
+    col_btn, col_note = st.columns([1, 2])
+    with col_btn:
+        if st.button("Start exploring (TLV defaults)", type="primary",
+                     use_container_width=True):
+            _load_tlv_defaults()
+    with col_note:
+        st.caption(
+            "Loads the newest **Tendril VAE** on the **TLV Colony Image Corpus** "
+            "(Harry's thesis dataset) — no setup needed."
+        )
 
     st.divider()
 
-    # Quick load from common paths
-    st.subheader("Quick Load")
+    # --- Step 1: model ------------------------------------------------------ #
+    st.subheader("1 · Model")
+    render_research_mode_toggle(location="main")
+    model_path, family_key = _render_family_version_picker()
 
-    common_paths = [
-        _settings.refined_path,
-    ]
+    st.divider()
 
-    for path in common_paths:
-        if path.exists():
-            st.info(f"Found data directory: `{path}`")
-            # List available inference objects
-            inference_files = list(path.rglob("inference_obj*.pkl"))
-            if inference_files:
-                st.write(f"Found {len(inference_files)} inference objects")
-
-
-def _render_data_loader():
-    """Render the data loading sidebar."""
-    st.header("Data Loading")
-
-    load_method = st.radio(
-        "Load method",
-        ["From Model + Images", "From Inference Object", "From NPZ + Images", "Demo Data"],
-        key="load_method",
-        help="'From Model + Images' is recommended - loads a candescence_new trained model directly"
+    # --- Step 2: dataset ---------------------------------------------------- #
+    st.subheader("2 · Dataset")
+    images_path = render_image_source_picker(
+        key_prefix="explorer_img",
+        default_dir=str(_settings.image_dir),
+        label="Images",
+        project="tlv",
     )
 
-    with st.expander("Manual morphology labels (manually_labelled_images.csv)", expanded=False):
+    metadata_path = st.text_input(
+        "Metadata file (optional)",
+        value=str(_settings.metadata_xlsx),
+        key="model_metadata_path",
+        help="Spreadsheet of per-image attributes (hue, colony size, …) used for "
+        "colouring points. Leave as-is to use the standard TLV metadata.",
+    )
+
+    max_samples = st.slider(
+        "Max images to load",
+        100, 5000, 1000,
+        help="Caps how many images are encoded — lower is faster and lighter on "
+        "memory.",
+        key="max_samples",
+    )
+
+    # Optional filters (meaningful for the standard TLV corpus filenames).
+    media_filter: Optional[List[str]] = None
+    wash_choice = "Both"
+    available_media = _available_media_in_directory(images_path)
+    with st.expander("Filters (optional)", expanded=False):
+        if available_media:
+            media_filter = st.multiselect(
+                "Growth media to include",
+                options=available_media,
+                default=available_media,
+                key="load_media_filter",
+                help="Only images from the selected media are loaded and encoded.",
+            )
+        wash_choice = st.radio(
+            "Wash / non-wash images",
+            options=["Both", "Non-wash only", "Wash only"],
+            index=0,
+            key="load_wash_filter",
+            horizontal=True,
+            help="Non-wash images are day2/day5; wash images carry 'wash' in the "
+            "filename.",
+        )
+    wash_filter: Optional[bool] = None
+    if wash_choice == "Non-wash only":
+        wash_filter = False
+    elif wash_choice == "Wash only":
+        wash_filter = True
+
+    with st.expander("Manual morphology labels (optional)", expanded=False):
         st.checkbox(
             "Merge manual labels into metadata after load",
             key="merge_manual_labels",
-            help="Joins on image filename stem (column id). Rows not listed in the CSV "
-            "become 'unlabelled'. Enables Color by → manual_formation.",
+            help="Joins hand-labelled morphologies on image filename. Enables "
+            "'Color by → manual_formation'. Rows not in the file become "
+            "'unlabelled'.",
         )
         st.text_input(
-            "Path to CSV (file_name + morphology columns)",
+            "Path to labels CSV (file_name + morphology columns)",
             key="manual_labels_csv_path",
         )
+
+    st.divider()
+
+    # --- Load --------------------------------------------------------------- #
+    if family_key == "diffusion_vae":
+        st.info(
+            "Stable Diffusion models don't expose a latent encoder for the "
+            "scatter view. Open **TLV Diffusion** to generate, reconstruct, and "
+            "interpolate with these models."
+        )
+        try:
+            st.page_link(
+                "pages/12_TLV_Diffusion.py", label="Open TLV Diffusion", icon="✨"
+            )
+        except Exception:  # pragma: no cover - older Streamlit without page_link
+            st.caption("Use the **TLV → Diffusion** page in the left menu.")
+    else:
+        if st.button("Load model + compute embeddings", type="primary",
+                     disabled=not model_path):
+            with st.spinner("Loading model and computing embeddings…"):
+                try:
+                    _load_from_model(
+                        model_path, images_path, metadata_path, max_samples,
+                        media_filter=media_filter, wash_filter=wash_filter,
+                    )
+                    st.session_state.data_loaded = True
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to load: {e}")
+                    logger.exception("Failed to load model")
+
+    # --- Advanced data sources ---------------------------------------------- #
+    with st.expander("Advanced data sources", expanded=False):
         st.caption(
-            "Requires columns **file_name** and **morphology**, matching training. "
-            "Your loaded rows must use the same **id** stems as in that file (e.g. BMP stem)."
+            "For pre-computed results or testing. Most users don't need these."
+        )
+        advanced = st.radio(
+            "Source",
+            ["Inference object (.pkl)", "Embeddings + images (.npz)", "Demo data"],
+            key="advanced_load_source",
+            horizontal=True,
+        )
+        if advanced == "Inference object (.pkl)":
+            _render_inference_loader()
+        elif advanced == "Embeddings + images (.npz)":
+            _render_npz_loader()
+        else:
+            _render_demo_loader()
+
+
+def _render_loaded_status():
+    """Show a loaded-data summary + a reset button in the explorer sidebar.
+
+    Migrated from the old sidebar loader so users keep the sample/latent-dim
+    readout, the manual-label diagnostics, and a way to load different data.
+    """
+    st.success("Data loaded")
+    st.metric("Samples", len(st.session_state.embeddings))
+    st.metric("Latent dim", st.session_state.embeddings.shape[1])
+
+    md = st.session_state.get("metadata_df")
+    if md is not None and "manual_formation" in md.columns:
+        vc = md["manual_formation"].astype(str).value_counts()
+        n_lab = int((md["manual_formation"].astype(str) != "unlabelled").sum())
+        st.caption(
+            f"**manual_formation:** {n_lab}/{len(md)} rows labelled; "
+            f"{len(vc)} distinct values. Set **Color by → manual_formation**."
         )
 
-    if load_method == "From Model + Images":
-        _render_model_loader()
-    elif load_method == "From Inference Object":
-        _render_inference_loader()
-    elif load_method == "From NPZ + Images":
-        _render_npz_loader()
-    else:
-        _render_demo_loader()
+    tendril_keys = st.session_state.get('tendril_keys', [])
+    if tendril_keys:
+        model = st.session_state.model
+        with st.expander(f"Tendril Info ({len(tendril_keys)} layers)",
+                         expanded=False):
+            if model is not None and model.has_tendrils():
+                t_info = model.get_tendril_info()
+                for key in tendril_keys:
+                    info = t_info.get(key, {})
+                    shape = info.get('input_shape', '?')
+                    ldim = info.get('latent_dim', '?')
+                    st.markdown(
+                        f"**{key}**: {shape[0]}ch "
+                        f"{shape[1]}x{shape[2]} -> {ldim}d latent"
+                        if isinstance(shape, list) and len(shape) == 3
+                        else f"**{key}**: latent_dim={ldim}"
+                    )
 
-    if st.session_state.data_loaded:
-        st.divider()
-        st.success("Data loaded!")
-        st.metric("Samples", len(st.session_state.embeddings))
-        st.metric("Latent dim", st.session_state.embeddings.shape[1])
-
-        md = st.session_state.get("metadata_df")
-        if md is not None and "manual_formation" in md.columns:
-            vc = md["manual_formation"].astype(str).value_counts()
-            n_lab = int((md["manual_formation"].astype(str) != "unlabelled").sum())
-            st.caption(
-                f"**manual_formation:** {n_lab}/{len(md)} rows with a label from the CSV; "
-                f"{len(vc)} distinct label values. Set **Coloring mode** to **Metadata**, then "
-                "**Color by** → **manual_formation**."
-            )
-            if n_lab == 0:
-                st.warning(
-                    "No rows matched the manual-label file (all `unlabelled`). "
-                    "Check that **id** in metadata equals the **file_name** stem in the CSV, "
-                    "and that the CSV path is correct."
-                )
-        elif st.session_state.get("merge_manual_labels", False):
-            st.caption(
-                "Column **manual_formation** was not added (merge disabled, CSV missing, or error). "
-                "Color by morphology needs that column."
-            )
-
-        # Tendril info panel
-        tendril_keys = st.session_state.get('tendril_keys', [])
-        if tendril_keys:
-            model = st.session_state.model
-            with st.expander(f"Tendril Info ({len(tendril_keys)} layers)", expanded=False):
-                if model is not None and model.has_tendrils():
-                    t_info = model.get_tendril_info()
-                    for key in tendril_keys:
-                        info = t_info.get(key, {})
-                        shape = info.get('input_shape', '?')
-                        ldim = info.get('latent_dim', '?')
-                        st.markdown(
-                            f"**{key}**: {shape[0]}ch "
-                            f"{shape[1]}x{shape[2]} -> {ldim}d latent"
-                            if isinstance(shape, list) and len(shape) == 3
-                            else f"**{key}**: latent_dim={ldim}"
-                        )
-
-        if st.button("Clear Data", type="secondary", key="clear_data_btn"):
-            _clear_data()
-            st.rerun()
+    if st.button("Load different data", type="secondary", key="clear_data_btn"):
+        _clear_data()
+        st.rerun()
 
 
 ZOO_BASE = _settings.zoo_path
@@ -1091,141 +1148,205 @@ def _discover_models() -> List[str]:
     return [str(p) for p in model_files]
 
 
-def _format_model_label(model_path: str) -> str:
-    """Format model path as 'experiment / run' with recency indicator."""
+# User-facing model families, in display order. Each maps to the architecture
+# name recorded in a model's args.json. Non-research users see only these four;
+# research mode additionally surfaces every other discovered architecture.
+_MODEL_FAMILIES: List[Tuple[str, str, str]] = [
+    ("Tendril VAE", "tendril_vae",
+     "Recommended — FiLM-conditioned VAE with per-layer ('tendril') latents."),
+    ("VAE", "c_vae", "Basic convolutional VAE (simplest)."),
+    ("UNet-VAE", "uc_vae", "U-Net VAE with skip connections."),
+    ("Stable Diffusion", "diffusion_vae",
+     "Conditional diffusion — explored on the separate TLV Diffusion page."),
+]
+
+# How an architecture name renders as a friendly family label.
+_ARCH_TO_FAMILY: Dict[str, str] = {arch: name for name, arch, _ in _MODEL_FAMILIES}
+
+
+def _format_version_label(model_path: str) -> str:
+    """Label a trained run by its experiment/run, date, and key training options.
+
+    Reads the sibling ``args.json`` once to surface what distinguishes one
+    version of a family from another (conditioning, augmentation, adjustment,
+    latent size), so users can tell otherwise-identical models apart.
+    """
     p = Path(model_path)
     experiment = p.parent.parent.parent.name
     run = p.parent.parent.name
+    label = f"{experiment} / {run}"
+
     try:
         mtime = datetime.fromtimestamp(p.stat().st_mtime)
-        age = datetime.now() - mtime
-        label = f"{experiment} / {run}"
-        if age.total_seconds() < 86400:
+        label += f" · {mtime:%Y-%m-%d}"
+        if (datetime.now() - mtime).total_seconds() < 86400:
             label += " (new)"
     except OSError:
-        label = f"{experiment} / {run}"
+        pass
+
+    config_path = p.parent / "args.json"
+    if config_path.is_file():
+        try:
+            with config_path.open() as handle:
+                cfg = json.load(handle)
+        except (OSError, ValueError):
+            cfg = {}
+        tags: List[str] = []
+        cond = cfg.get("conditional_variables") or []
+        if cond:
+            short = ",".join(str(c).replace("average_", "")[:3] for c in cond)
+            tags.append(f"cond={short}")
+        else:
+            tags.append("uncond")
+        if cfg.get("augment_images"):
+            tags.append("+aug")
+        if cfg.get("adjust_images"):
+            tags.append("+adj")
+        if cfg.get("latent_dim"):
+            tags.append(f"z{cfg['latent_dim']}")
+        if tags:
+            label += "  ·  " + " ".join(tags)
     return label
 
 
-def _render_model_loader():
-    """Render model + images loader for candescence_new models."""
-    st.markdown("""
-    **Load a trained candescence_new model directly.**
-    This computes embeddings on-the-fly from the model.
-    """)
+def _models_by_family() -> Dict[str, List[str]]:
+    """Group discovered model paths by architecture (read from args.json).
 
-    # Curate by architecture tier: public mode hides research-tier models.
-    render_research_mode_toggle()
+    Uses the same tier-filtered :func:`_discover_models` list, so research-only
+    architectures are already excluded in public mode. Models with no
+    discoverable architecture land under ``"(unknown)"``.
+    """
+    by_arch: Dict[str, List[str]] = {}
+    for model_path in _discover_models():
+        arch = _model_architecture_hint(Path(model_path)) or "(unknown)"
+        by_arch.setdefault(arch, []).append(model_path)
+    return by_arch
 
-    # Auto-discover trained models
-    col_label, col_refresh = st.columns([3, 1])
-    with col_label:
-        st.markdown("**Select a trained model:**")
+
+def _default_tendril_model() -> Optional[str]:
+    """Return the newest Tendril VAE in the zoo (the 'recommended' default).
+
+    Falls back to the newest model of any family, or ``None`` if the zoo is
+    empty. No run id is hardcoded — it always tracks the latest good model.
+    """
+    models = _discover_models()  # newest-first
+    for model_path in models:
+        if _model_architecture_hint(Path(model_path)) == "tendril_vae":
+            return model_path
+    return models[0] if models else None
+
+
+def _render_family_version_picker() -> Tuple[Optional[str], str]:
+    """Two-level model picker: choose a family, then a trained version.
+
+    Returns ``(model_path, family_key)``. ``model_path`` is ``None`` for the
+    Stable Diffusion family (which is a redirect, not a load) or when no model is
+    available. ``family_key`` is the architecture name of the chosen family.
+    """
+    by_arch = _models_by_family()
+
+    # Build the family menu. Public mode: only the four curated families that
+    # have at least one model (Stable Diffusion always shown — it's a redirect).
+    # Research mode: append every other discovered architecture.
+    family_options: List[Tuple[str, str]] = []  # (display label, arch key)
+    for name, arch, _desc in _MODEL_FAMILIES:
+        if arch == "diffusion_vae" or by_arch.get(arch):
+            family_options.append((name, arch))
+    if research_mode_enabled():
+        for arch in sorted(by_arch):
+            if arch not in _ARCH_TO_FAMILY:
+                family_options.append((arch, arch))
+
+    if not family_options:
+        st.warning("No trained models found in the zoo.")
+        return None, "(none)"
+
+    col_pick, col_refresh = st.columns([4, 1])
     with col_refresh:
-        if st.button("Refresh", key="refresh_models_btn", help="Rescan for new models"):
+        st.write("")  # vertical nudge to align with the selectbox
+        if st.button("Refresh", key="refresh_models_btn",
+                     help="Rescan the zoo for new models"):
             st.rerun()
-
-    discovered_models = _discover_models()
-
-    if discovered_models:
-        st.success(f"Found {len(discovered_models)} trained model(s)")
-
-        model_path = st.selectbox(
-            "Select model",
-            discovered_models,
-            format_func=_format_model_label,
-            key="model_select"
+    with col_pick:
+        labels = [name for name, _ in family_options]
+        fam_idx = st.selectbox(
+            "Model family",
+            options=list(range(len(family_options))),
+            format_func=lambda i: labels[i],
+            key="model_family_select",
         )
+    family_name, family_key = family_options[fam_idx]
 
-        with st.expander("Or enter a custom model path"):
-            custom_path = st.text_input(
-                "Model path (.pth)",
-                value="",
-                key="custom_model_path_input"
+    # Show the family's one-line description.
+    desc = next((d for n, a, d in _MODEL_FAMILIES if a == family_key), "")
+    if desc:
+        st.caption(desc)
+
+    # Stable Diffusion: redirect, no load path (handled by the caller).
+    if family_key == "diffusion_vae":
+        return None, "diffusion_vae"
+
+    versions = by_arch.get(family_key, [])
+    if not versions:
+        st.warning(f"No trained {family_name} models found.")
+        return None, family_key
+
+    model_path = st.selectbox(
+        f"{family_name} version",
+        options=versions,  # already newest-first
+        format_func=_format_version_label,
+        key="model_version_select",
+    )
+
+    with st.expander("Or enter a custom model path"):
+        custom_path = st.text_input(
+            "Model path (.pth)", value="", key="custom_model_path_input"
+        )
+        if custom_path.strip():
+            model_path = custom_path.strip()
+
+    return model_path, family_key
+
+
+def _load_tlv_defaults() -> None:
+    """One-click startup: newest Tendril VAE on the TLV Colony Image Corpus.
+
+    This is Harry's thesis setup — no parameters to fill in.
+    """
+    model_path = _default_tendril_model()
+    if not model_path:
+        st.error("No Tendril VAE found in the model zoo.")
+        return
+
+    # Resolve the canonical TLV corpus from the dataset registry, falling back to
+    # the settings-resolved image dir if the registry entry is missing.
+    images_path = str(_settings.image_dir)
+    try:
+        from candescence.core.dataset_zoo import DatasetZoo
+
+        entry = DatasetZoo().get("tlv_images")
+        if entry is not None and Path(entry.path).is_dir():
+            images_path = entry.path
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("Could not resolve tlv_images from the dataset zoo")
+
+    with st.spinner("Loading TLV defaults (newest Tendril VAE on the colony "
+                    "corpus)…"):
+        try:
+            _load_from_model(
+                model_path, images_path, str(_settings.metadata_xlsx),
+                max_samples=1000, media_filter=None, wash_filter=None,
             )
-            if custom_path.strip():
-                model_path = custom_path.strip()
-    else:
-        st.warning("No models found in zoo. Enter a path manually.")
-        model_path = st.text_input(
-            "Model path (.pth)",
-            value="",
-            key="model_path_input"
-        )
-
-    # Image source selection: directory (default settings path) or upload.
-    images_path = render_image_source_picker(
-        key_prefix="explorer_img",
-        default_dir=str(_settings.image_dir),
-        label="Image source",
-        project="tlv",
-    )
-
-    # Metadata path
-    metadata_path = st.text_input(
-        "Metadata file (optional)",
-        value=str(_settings.metadata_xlsx),
-        key="model_metadata_path"
-    )
-
-    # Sampling options
-    max_samples = st.slider(
-        "Max samples to load",
-        100, 5000, 1000,
-        help="Limit samples to reduce memory and computation time",
-        key="max_samples"
-    )
-
-    # Media filter — only load images from selected media
-    available_media = _available_media_in_directory(images_path)
-    media_filter: Optional[List[str]] = None
-    if available_media:
-        media_filter = st.multiselect(
-            "Filter images by media (before inference)",
-            options=available_media,
-            default=available_media,
-            key="load_media_filter",
-            help=(
-                "Only images from the selected media will be loaded and encoded. "
-                "PCA / t-SNE / UMAP will be fit on this subset only. "
-                "Select all to load everything (same as before)."
-            ),
-        )
-
-    # Wash / non-wash filter — keyed off the condition token in the filename
-    wash_choice = st.radio(
-        "Include wash / non-wash images (before inference)",
-        options=["Both", "Non-wash only", "Wash only"],
-        index=0,
-        key="load_wash_filter",
-        horizontal=True,
-        help=(
-            "Non-wash images are day2/day5 (condition token starts with 'day'); "
-            "wash images have 'wash' as the condition token in the filename."
-        ),
-    )
-    wash_filter: Optional[bool] = None
-    if wash_choice == "Non-wash only":
-        wash_filter = False
-    elif wash_choice == "Wash only":
-        wash_filter = True
-
-    if st.button("Load Model + Compute Embeddings", type="primary"):
-        with st.spinner("Loading model and computing embeddings..."):
-            try:
-                _load_from_model(model_path, images_path, metadata_path, max_samples,
-                                 media_filter=media_filter,
-                                 wash_filter=wash_filter)
-                st.session_state.data_loaded = True
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed to load: {e}")
-                logger.exception("Failed to load model")
+            st.session_state.data_loaded = True
+            st.rerun()
+        except Exception as e:
+            st.error(f"Failed to load TLV defaults: {e}")
+            logger.exception("Failed to load TLV defaults")
 
 
 def _render_inference_loader():
     """Render inference object loader."""
-    st.warning("⚠️ Old inference objects may have dependency issues. Consider using 'From Model + Images' instead.")
+    st.warning("⚠️ Old inference objects may have dependency issues. Prefer picking a model above instead.")
 
     inference_path = st.text_input(
         "Inference object path (.pkl)",
@@ -2250,6 +2371,7 @@ def _render_explorer():
 
     # Sidebar controls
     with st.sidebar:
+        _render_loaded_status()
         st.divider()
         _render_visualization_controls()
         st.divider()
@@ -7157,7 +7279,7 @@ def _render_sprite_map_for_space(
                 st.warning(
                     "**No metadata loaded.** Balance / filtered sprite modes need a metadata "
                     "table with one row per image (same order as encoding). "
-                    "Use **Uniform (random)** or load via **From Model + Images** with a merged "
+                    "Use **Uniform (random)**, or reload by picking a model with a merged "
                     "metadata file."
                 )
             else:
