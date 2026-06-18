@@ -20,6 +20,25 @@ Or from Python:
     latent_explorer_main()
 """
 
+# --- Thread caps (keep before heavy BLAS use) ---------------------------------
+# This host can have far more than 128 CPU cores; OpenBLAS is built for <=128
+# threads and aborts ("too many memory regions") when it tries to use them all.
+# Cap BLAS / OpenMP threads (also honouring the lab's <=20-core rule). The env
+# vars are inherited by any joblib subprocess; threadpoolctl caps the already
+# loaded OpenBLAS in-process. The limiter is kept at module scope so the cap
+# persists for the process lifetime.
+import os as _os
+
+_THREAD_CAP = "8"
+for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    _os.environ.setdefault(_v, _THREAD_CAP)
+try:
+    import threadpoolctl as _threadpoolctl
+    _THREAD_LIMITER = _threadpoolctl.threadpool_limits(limits=int(_THREAD_CAP))
+except Exception:  # pragma: no cover - threadpoolctl ships with scikit-learn
+    _THREAD_LIMITER = None
+
 import json
 import pickle
 from datetime import datetime
@@ -1032,7 +1051,7 @@ def _render_entry():
     col_btn, col_note = st.columns([1, 2])
     with col_btn:
         if st.button("Start exploring (TLV defaults)", type="primary",
-                     use_container_width=True):
+                     width='stretch'):
             _load_tlv_defaults()
     with col_note:
         st.caption(
@@ -2776,11 +2795,11 @@ def _tlv_capture_click(fig, key: str, space_name: Optional[str] = None) -> None:
     """
     try:
         event = st.plotly_chart(
-            fig, use_container_width=False, on_select="rerun",
+            fig, width='content', on_select="rerun",
             selection_mode=["points", "box", "lasso"], key=key,
         )
     except (TypeError, AttributeError):
-        st.plotly_chart(fig, use_container_width=False)
+        st.plotly_chart(fig, width='content')
         return
 
     points = None
@@ -2848,7 +2867,7 @@ def _render_selected_image_panel(idx: Optional[int]) -> None:
         if images is not None:
             try:
                 st.image(_image_array_for_display(idx, images),
-                         use_container_width=True)
+                         width='stretch')
             except Exception:
                 st.warning("Image unavailable.")
         else:
@@ -2857,7 +2876,7 @@ def _render_selected_image_panel(idx: Optional[int]) -> None:
         st.markdown("**x̂** — reconstruction")
         recon = _reconstruct_primary(idx)
         if recon is not None:
-            st.image(recon, use_container_width=True)
+            st.image(recon, width='stretch')
         else:
             st.caption("Reconstruction needs a loaded model.")
 
@@ -3022,7 +3041,7 @@ def _render_tendril_latent_view() -> None:
             key="tlv_go_idx",
         )
         if st.button("Show this image", key="tlv_go_btn",
-                     use_container_width=True):
+                     width='stretch'):
             st.session_state.clicked_idx = int(go_idx)
             st.rerun()
 
@@ -3720,7 +3739,7 @@ def _render_all_latent_spaces():
                 try:
                     event = st.plotly_chart(
                         fig,
-                        use_container_width=True,
+                        width='stretch',
                         on_select="rerun",
                         selection_mode=["points", "box"],
                         key=f"mini_scatter_slot_{plot_slot}_{space_name}",
@@ -3758,7 +3777,7 @@ def _render_all_latent_spaces():
                 except (TypeError, AttributeError):
                     st.plotly_chart(
                         fig,
-                        use_container_width=True,
+                        width='stretch',
                         key=f"mini_scatter_slot_{plot_slot}_{space_name}_fallback",
                     )
 
@@ -4106,7 +4125,7 @@ def _render_scatter_plot():
         # Try the newer on_select API (Streamlit >= 1.29)
         event = st.plotly_chart(
             fig,
-            use_container_width=True,
+            width='stretch',
             on_select="rerun",
             selection_mode=["points", "box", "lasso"],
             key="latent_scatter"
@@ -4156,7 +4175,7 @@ def _render_scatter_plot():
 
     except (TypeError, AttributeError) as e:
         # Fallback for older Streamlit versions or API issues
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.info(f"Click selection unavailable. Using manual selection below.")
 
     # Manual selection fallback/alternative
@@ -4232,7 +4251,7 @@ def _render_preview_image(idx: int):
 
     # Show image
     img = _image_array_for_display(idx, images)
-    st.image(img, use_container_width=True)
+    st.image(img, width='stretch')
 
 
 def _handle_click(point: Dict[str, Any]):
@@ -4404,7 +4423,7 @@ def _render_region_profile():
                 for j, idx in enumerate(show_indices[row_start:row_start + n_cols]):
                     with cols[j]:
                         img = _image_array_for_display(idx, images)
-                        st.image(img, caption=str(idx), use_container_width=True)
+                        st.image(img, caption=str(idx), width='stretch')
 
     # ── Categorical column summaries ───────────────────────────────────
     cat_cols = _order_label_columns_for_ui(_metadata_label_columns(metadata_df))
@@ -4443,7 +4462,7 @@ def _render_region_profile():
                     jsd_scores[col_name] = 0.0
 
                 st.markdown(f"**{col_name}**")
-                st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.dataframe(summary, width='stretch', hide_index=True)
 
                 # Flag notable enrichment / depletion (skip zero-count categories)
                 enriched = summary[
@@ -4498,7 +4517,7 @@ def _render_region_profile():
                     'Std (all)': round(float(all_vals.std()), 4),
                 })
             if rows:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
             # Histogram overlays for each numeric column
             for col_name in numeric_cols:
@@ -4520,7 +4539,7 @@ def _render_region_profile():
                     height=250, margin=dict(l=40, r=20, t=40, b=30),
                     template='plotly_white', legend=dict(orientation='h'),
                 )
-                st.plotly_chart(fig_hist, use_container_width=True)
+                st.plotly_chart(fig_hist, width='stretch')
 
     # ── Top distinguishing features (by JSD) ──────────────────────────
     if jsd_scores:
@@ -4600,7 +4619,7 @@ def _render_data_point(idx: int):
     # Show image if available (prominently)
     if images is not None:
         img = _image_array_for_display(idx, images)
-        st.image(img, caption=f"Image {idx}", use_container_width=True)
+        st.image(img, caption=f"Image {idx}", width='stretch')
     else:
         st.warning("No images available")
 
@@ -4642,7 +4661,7 @@ def _render_empty_point(x: float, y: float, decoded: Optional[np.ndarray]):
 
     if decoded is not None:
         img = _prepare_image(decoded)
-        st.image(img, caption="Decoded image", use_container_width=True)
+        st.image(img, caption="Decoded image", width='stretch')
     else:
         st.warning("Could not decode image")
 
@@ -4832,14 +4851,14 @@ def _render_interpolation_for_space(
                         st.image(
                             _image_array_for_display(start_idx, images),
                             caption=f"Original (index {start_idx})",
-                            use_container_width=True
+                            width='stretch'
                         )
                 with start_cols[1]:
                     if recon_start is not None:
                         st.image(
                             _prepare_image(recon_start),
                             caption=f"Reconstructed (a=0)",
-                            use_container_width=True
+                            width='stretch'
                         )
 
                 # End point
@@ -4850,14 +4869,14 @@ def _render_interpolation_for_space(
                         st.image(
                             _image_array_for_display(end_idx, images),
                             caption=f"Original (index {end_idx})",
-                            use_container_width=True
+                            width='stretch'
                         )
                 with end_cols[1]:
                     if recon_end is not None:
                         st.image(
                             _prepare_image(recon_end),
                             caption=f"Reconstructed (a=1)",
-                            use_container_width=True
+                            width='stretch'
                         )
 
                 # Display interpolation filmstrip
@@ -5004,7 +5023,7 @@ def _render_interpolation_plot(
     try:
         selected = st.plotly_chart(
             fig,
-            use_container_width=True,
+            width='stretch',
             on_select="rerun",
             selection_mode="points",
             key=f"interp_scatter{key_suffix}"
@@ -5045,7 +5064,7 @@ def _render_interpolation_plot(
                             st.rerun()
 
     except (TypeError, AttributeError) as e:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.warning("Click events not available. Please use manual coordinate entry instead (uncheck the box above).")
 
 
@@ -5475,7 +5494,7 @@ def _render_neighbor_gallery(
                 st.image(
                     _image_array_for_display(tile_idx, images),
                     caption=caption,
-                    use_container_width=True,
+                    width='stretch',
                 )
 
     return True
@@ -5677,7 +5696,7 @@ def _render_cross_space_neighbor_panels():
                 st.image(
                     _image_array_for_display(anchor_idx, images),
                     caption=f"Anchor [{anchor_idx}]",
-                    use_container_width=True,
+                    width='stretch',
                 )
             with head_r:
                 st.caption(
@@ -5706,7 +5725,7 @@ def _render_cross_space_neighbor_panels():
                             st.image(
                                 _image_array_for_display(ni, images),
                                 caption=f"[{ni}] d={nd:.3f}",
-                                use_container_width=True,
+                                width='stretch',
                             )
 
             if anchor_idx != anchors[-1]:
@@ -6078,7 +6097,7 @@ def _render_dimension_sweep_for_space(
             st.image(
                 _image_array_for_display(int(sweep_idx), images),
                 caption=f"Index {int(sweep_idx)}",
-                use_container_width=True,
+                width='stretch',
             )
         with ref_recon:
             st.markdown("**Reconstruction x̂:**")
@@ -6087,7 +6106,7 @@ def _render_dimension_sweep_for_space(
                 st.image(
                     _prepare_image(recon),
                     caption="x̂ (encode → decode)",
-                    use_container_width=True,
+                    width='stretch',
                 )
             else:
                 st.caption("unavailable")
@@ -6257,7 +6276,7 @@ def _render_dimension_sweep_for_space(
                         )
                         st.caption("center")
                     else:
-                        st.image(display_img, use_container_width=True)
+                        st.image(display_img, width='stretch')
                         if is_diff:
                             pct = 100.0 * _feature_change_fraction(img, center_feat)
                             st.caption("centre" if j == center_col_idx else f"{pct:.1f}%")
@@ -6439,7 +6458,7 @@ def _render_latent_sliders_for_space(
         st.image(
             _image_array_for_display(st.session_state[base_index_key], images),
             caption=f"Index {st.session_state[base_index_key]}",
-            use_container_width=True
+            width='stretch'
         )
 
     # Sliders - use expander if many dims
@@ -6495,7 +6514,7 @@ def _render_latent_sliders_for_space(
                     st.image(
                         _feature_diff_to_rgb(feat, base_feat),
                         caption=f"Δx̂_ℓ — {pct:.1f}% L2 change",
-                        use_container_width=True,
+                        width='stretch',
                     )
                 else:
                     st.caption("Base feature unavailable.")
@@ -6504,7 +6523,7 @@ def _render_latent_sliders_for_space(
                 st.image(
                     _feature_map_to_rgb(feat, view_mode),
                     caption=f"x̂_ℓ ({_space_display_label(space_name)})",
-                    use_container_width=True,
+                    width='stretch',
                 )
         else:
             decoded_img = st.session_state.get(decoded_img_key)
@@ -6513,7 +6532,7 @@ def _render_latent_sliders_for_space(
                 st.image(
                     _prepare_image(decoded_img),
                     caption="Slider decode",
-                    use_container_width=True
+                    width='stretch'
                 )
             else:
                 st.caption("Click 'Decode' to generate")
@@ -7168,7 +7187,7 @@ def _render_cluster_enrichment():
                 "missing from this table."
             )
             if summary_df is not None and not summary_df.empty:
-                st.dataframe(summary_df, use_container_width=True)
+                st.dataframe(summary_df, width='stretch')
             else:
                 st.info("No summary available.")
 
@@ -7187,7 +7206,7 @@ def _render_cluster_enrichment():
                 display_df = display_df[display_df["q_value"] < q_thresh]
             st.dataframe(
                 display_df.sort_values(["cluster", "q_value"]),
-                use_container_width=True,
+                width='stretch',
             )
 
             # Heatmap of -log10(q_value) by cluster x label
@@ -7210,7 +7229,7 @@ def _render_cluster_enrichment():
                 height=max(250, 50 * len(heatmap_data)),
                 margin=dict(l=10, r=10, t=30, b=10),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             st.caption(
                 "**Interpretation:** Small q-value + enrichment ratio > 1 indicates "
@@ -7393,7 +7412,7 @@ def _render_latent_probes():
             styler = styler.apply(
                 lambda s, a=attr: [_highlight(v, a) for v in s], subset=[lbl]
             )
-        st.dataframe(styler, use_container_width=True)
+        st.dataframe(styler, width='stretch')
         st.caption(
             "Green = encoded above baseline; red = at/below baseline. Compare "
             "rows to see which **TLR level** carries each attribute (e.g. fine "
@@ -7603,7 +7622,7 @@ def _render_nuisance_correction():
         with p1:
             if st.button("Build adjusted ℓ=1", key="nc_preset_l1",
                          disabled=l1_key is None or l1_key not in src_spaces,
-                         use_container_width=True):
+                         width='stretch'):
                 if _build_corrected_space([l1_key], default_num, default_cat,
                                           'corr:l1', 'Adjusted TLR ℓ=1'):
                     st.rerun()
@@ -7611,7 +7630,7 @@ def _render_nuisance_correction():
             if st.button("Build adjusted ℓ=1⊕ℓ=2", key="nc_preset_l1l2",
                          disabled=(l1_key is None or l2_key is None
                                    or l1_key not in src_spaces or l2_key not in src_spaces),
-                         use_container_width=True):
+                         width='stretch'):
                 if _build_corrected_space([l1_key, l2_key], default_num, default_cat,
                                           'corr:l1+l2', 'Adjusted TLR ℓ=1⊕ℓ=2'):
                     st.rerun()
@@ -7732,7 +7751,7 @@ def _render_nuisance_correction():
         probe_rows = st.session_state.get(f'nc_probe_{sel}')
         if probe_rows:
             st.dataframe(pd.DataFrame(probe_rows).set_index('attribute'),
-                         use_container_width=True)
+                         width='stretch')
 
         # Layout of the corrected embedding.
         st.markdown("#### Corrected layout")
@@ -7754,7 +7773,7 @@ def _render_nuisance_correction():
             )
             fig.update_traces(marker=dict(size=4, opacity=0.6))
             fig.update_layout(height=520, margin=dict(l=10, r=10, t=40, b=10))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
         # Download.
         import io
@@ -7938,7 +7957,7 @@ def _render_silhouette_mantel():
                     yaxis=dict(showticklabels=False),
                     margin=dict(l=10, r=10, t=40, b=10),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
             st.caption(
                 "**Silhouette score** measures how similar each sample is to its own "
@@ -8293,7 +8312,7 @@ def _render_silhouette_mantel():
                 and last_img_key[0] == space_name
                 and last_img_key in cache_img
             ):
-                st.dataframe(cache_img[last_img_key], use_container_width=True)
+                st.dataframe(cache_img[last_img_key], width='stretch')
 
 
 def _render_local_label_metrics():
@@ -8405,7 +8424,7 @@ def _render_local_label_metrics():
                 height=300,
                 margin=dict(l=10, r=10, t=40, b=10),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             st.caption(
                 "**k-NN purity** measures the fraction of each point's *k* nearest "
@@ -8583,7 +8602,7 @@ def _render_rank_change_across_spaces():
             st.markdown("#### Layer-to-layer transitions")
             st.dataframe(
                 rc_result.moves.set_index('transition'),
-                use_container_width=True,
+                width='stretch',
             )
             st.caption(
                 "**Mean |Δrank|** shows how much pair rankings shift on average "
@@ -9494,7 +9513,7 @@ def _render_sprite_map_for_space(
         st.image(
             sprite_img,
             caption=f"Sprite Map ({_method_caption}) — {sprite_img.shape[1]}x{sprite_img.shape[0]}px",
-            use_container_width=True
+            width='stretch'
         )
 
         # Download as PNG
