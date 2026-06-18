@@ -612,6 +612,7 @@ def plot_replicate_distance_distribution_per_layer(
     layers: Tuple[str, ...] = ("x0", "x1", "x2", "x3"),
     bins: int = 50,
     title_prefix: str = "Layer",
+    layer_labels: Optional[Dict[str, str]] = None,
 ) -> Dict[str, plt.Figure]:
     """Overlaid histograms of replicate vs random pair distances per layer.
 
@@ -638,7 +639,8 @@ def plot_replicate_distance_distribution_per_layer(
         ax.hist(non_vals, bins=edges, alpha=0.6, label=f"Random (n={len(non_vals)})", color="salmon")
         ax.set_xlabel("L2 distance")
         ax.set_ylabel("Count")
-        ax.set_title(f"{title_prefix} {lname}")
+        disp = (layer_labels or {}).get(lname) or f"{title_prefix} {lname}"
+        ax.set_title(disp)
         ax.legend()
         fig.tight_layout()
         figs[lname] = fig
@@ -656,6 +658,7 @@ def plot_intermediate_layer_outliers(
     n_outliers: int = 10,
     label: str = "Replicate",
     image_col: str = "rgb_image",
+    layer_labels: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Tuple[plt.Figure, plt.Figure]]:
     """Show left/right outlier pairs (most similar / most different) per layer.
 
@@ -681,13 +684,14 @@ def plot_intermediate_layer_outliers(
         if n_left == 0 and n_right == 0:
             continue
 
+        disp = (layer_labels or {}).get(lname) or lname
         left_fig = _outlier_grid(
             left, df, lname, n_left, image_col,
-            title=f"{lname} — {label} Left Outliers (Most Similar)",
+            title=f"{disp} — {label} pairs: most SIMILAR (smallest distance)",
         )
         right_fig = _outlier_grid(
             right, df, lname, n_right, image_col,
-            title=f"{lname} — {label} Right Outliers (Most Different)",
+            title=f"{disp} — {label} pairs: most DIFFERENT (largest distance)",
         )
         figs[lname] = (left_fig, right_fig)
     return figs
@@ -727,6 +731,7 @@ def _outlier_grid(
             ax.axis("off")
 
     pair_iter = subset.iterrows()
+    drawn_pairs: List[Tuple[plt.Axes, plt.Axes]] = []
     for pair_idx in range(n_pairs):
         try:
             _, r = next(pair_iter)
@@ -752,7 +757,28 @@ def _outlier_grid(
         ax_b.set_title(f"B:{r['id_b']}\nd={r[layer]:.3f}", fontsize=7)
         ax_b.axis("off")
 
+        drawn_pairs.append((ax_a, ax_b))
+
     fig.tight_layout()
+
+    # Draw a box around each (A, B) pair so replicate pairs are visually
+    # distinct — without it the images form an undifferentiated grid and it is
+    # hard to tell which two belong together.
+    from matplotlib.patches import FancyBboxPatch
+    from matplotlib.transforms import Bbox
+
+    for ax_a, ax_b in drawn_pairs:
+        bb = Bbox.union([ax_a.get_position(), ax_b.get_position()])
+        pad = 0.006
+        rect = FancyBboxPatch(
+            (bb.x0 - pad, bb.y0 - pad),
+            bb.width + 2 * pad, bb.height + 2 * pad,
+            boxstyle="round,pad=0.004",
+            transform=fig.transFigure,
+            fill=False, edgecolor="0.35", linewidth=1.3, zorder=0,
+        )
+        fig.add_artist(rect)
+
     return fig
 
 

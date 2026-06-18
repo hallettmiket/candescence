@@ -511,6 +511,56 @@ def _plate_phys_from_filename(stem: str) -> Optional[str]:
     return f"{plate}:{media}:{day}"
 
 
+def _plate_from_filename(stem: str) -> Optional[str]:
+    """Extract the plate token (e.g. ``"Pl9"``, ``"P12"``) from a filename stem."""
+    parts = str(stem).split('_')
+    if len(parts) < 3:
+        return None
+    return parts[0]
+
+
+def _scan_image_facets(images_path: str) -> List[dict]:
+    """Scan an images directory once (filenames only — no pixels) and return a
+    per-file dict of facet tokens ``{media, day, plate, wash}``.
+
+    Used to populate the loader filter panel and to count how many images match
+    the chosen criteria *before* committing to encode them.
+    """
+    p = Path(images_path)
+    if not p.is_dir():
+        return []
+    facets: List[dict] = []
+    for f in p.iterdir():
+        if f.suffix.lower() in ('.bmp', '.png'):
+            stem = f.stem
+            facets.append({
+                'media': _media_from_filename(stem),
+                'day': _day_from_filename(stem),
+                'plate': _plate_from_filename(stem),
+                'wash': _is_wash_filename(stem),
+            })
+    return facets
+
+
+def _facet_matches(
+    facet: dict,
+    media_filter: Optional[List[str]],
+    wash_filter: Optional[bool],
+    day_filter: Optional[List[str]],
+    plate_filter: Optional[List[str]],
+) -> bool:
+    """True if one scanned file's facets pass all active filters."""
+    if media_filter and facet.get('media') not in set(media_filter):
+        return False
+    if wash_filter is not None and facet.get('wash') != wash_filter:
+        return False
+    if day_filter and facet.get('day') not in set(day_filter):
+        return False
+    if plate_filter and facet.get('plate') not in set(plate_filter):
+        return False
+    return True
+
+
 def _available_media_in_directory(images_path: str) -> List[str]:
     """Scan an images directory and return sorted unique media labels."""
     p = Path(images_path)
@@ -774,6 +824,55 @@ def _dedupe_tendril_keys_preserve_order(keys: Optional[List[str]]) -> List[str]:
     return out
 
 
+def _space_display_label(space_name: str) -> str:
+    """Human-facing label for a latent space.
+
+    ``'primary'`` → ``"Primary (z)"``; a tendril key → ``"TLR ℓ=i"`` where ``i``
+    is the tendril's position (thesis notation: TLR = Tendril Latent
+    Representation). Falls back to ``"TLR <key>"`` if the key is unknown.
+    """
+    if space_name == 'primary':
+        return "Primary (z)"
+    if space_name == 'corrected':
+        return "Nuisance-corrected"  # legacy single-key fallback
+    if isinstance(space_name, str) and space_name.startswith('corr:'):
+        reg = st.session_state.get('corrected_registry') or {}
+        entry = reg.get(space_name)
+        if entry and entry.get('label'):
+            return entry['label']
+        return f"Adjusted ({space_name.split(':', 1)[1]})"
+    keys = _dedupe_tendril_keys_preserve_order(
+        list(st.session_state.get('tendril_keys', []) or [])
+    )
+    try:
+        return f"TLR ℓ={keys.index(str(space_name))}"
+    except ValueError:
+        return f"TLR {space_name}"
+
+
+def _analysis_spaces() -> List[str]:
+    """Ordered latent-space keys valid for **vector-only** analyses.
+
+    ``['primary'] + tendril_keys + registered corr: keys``, filtered to those
+    present in ``all_embeddings`` and aligned to ``len(metadata_df)``. Corrected
+    keys come last so no selector ever defaults to one. Generative/decode tools
+    do NOT use this — they build their own ``['primary'] + tendril_keys`` lists,
+    because a residualized ``corr:`` embedding has no decoder.
+    """
+    md = st.session_state.get('metadata_df')
+    if md is None:
+        return ['primary']
+    n = len(md)
+    all_emb = st.session_state.get('all_embeddings') or {}
+    tendrils = _dedupe_tendril_keys_preserve_order(
+        list(st.session_state.get('tendril_keys', []) or [])
+    )
+    reg = st.session_state.get('corrected_registry') or {}
+    candidates = ['primary'] + tendrils + list(reg.keys())
+    return [s for s in candidates
+            if all_emb.get(s) is not None and len(all_emb[s]) == n]
+
+
 def _global_indices_from_plotly_points(points: Any) -> List[int]:
     """Map Plotly selection points to global row indices using ``customdata`` when set."""
     out: List[int] = []
@@ -784,10 +883,16 @@ def _global_indices_from_plotly_points(points: Any) -> List[int]:
             continue
         cd = pt.get("customdata")
         if cd is not None:
+            # The first customdata column is the global index. It may arrive as a
+            # number or, when customdata mixes ints with strings (id/label), as a
+            # numpy string — parse defensively rather than assuming a float dtype.
             arr = np.asarray(cd).ravel()
-            if arr.size > 0 and np.isfinite(arr[0]):
-                out.append(int(arr[0]))
-                continue
+            if arr.size > 0:
+                try:
+                    out.append(int(float(arr[0])))
+                    continue
+                except (TypeError, ValueError, OverflowError):
+                    pass
         pi = pt.get("point_index")
         if pi is None:
             pi = pt.get("pointIndex")
@@ -932,7 +1037,9 @@ def _render_entry():
     with col_note:
         st.caption(
             "Loads the newest **Tendril VAE** on the **TLV Colony Image Corpus** "
-            "(Harry's thesis dataset) — no setup needed."
+            "(Harry's thesis dataset) — a 1000-image quick-start sample, no setup "
+            "needed. To choose *which* images (by media / day / plate / wash) and "
+            "use all of them, load via **2 · Dataset** below and open **Filters**."
         )
 
     st.divider()
@@ -961,19 +1068,37 @@ def _render_entry():
         "colouring points. Leave as-is to use the standard TLV metadata.",
     )
 
+    # Scan the corpus (filenames only) so the cap slider can reach the full
+    # dataset and the filter options/counts reflect what's actually on disk.
+    facets = _scan_image_facets(images_path)
+    corpus_total = len(facets)
+    slider_max = max(1000, corpus_total) if corpus_total else 20000
+
     max_samples = st.slider(
         "Max images to load",
-        100, 5000, 1000,
+        100, slider_max, min(1000, slider_max), step=100,
         help="Caps how many images are encoded — lower is faster and lighter on "
-        "memory.",
+        "memory. The maximum equals the whole corpus on disk"
+        + (f" ({corpus_total} images)" if corpus_total else "")
+        + ". To use every image that matches your filters in one click, tick "
+        "'Load all matching images' below.",
         key="max_samples",
     )
 
     # Optional filters (meaningful for the standard TLV corpus filenames).
+    # Select by media / wash / day / plate; all matching images are then used.
     media_filter: Optional[List[str]] = None
+    day_filter: Optional[List[str]] = None
+    plate_filter: Optional[List[str]] = None
     wash_choice = "Both"
-    available_media = _available_media_in_directory(images_path)
-    with st.expander("Filters (optional)", expanded=False):
+    available_media = sorted({f['media'] for f in facets if f['media']})
+    available_days = sorted({f['day'] for f in facets if f['day']})
+    available_plates = sorted({f['plate'] for f in facets if f['plate']})
+    with st.expander("Filters — select which images to use (optional)", expanded=False):
+        st.caption(
+            "Pick any combination of criteria. Every image that matches **all** "
+            "of them is loaded (subject to the cap / 'Load all' option)."
+        )
         if available_media:
             media_filter = st.multiselect(
                 "Growth media to include",
@@ -981,6 +1106,26 @@ def _render_entry():
                 default=available_media,
                 key="load_media_filter",
                 help="Only images from the selected media are loaded and encoded.",
+            )
+        if available_days:
+            day_filter = st.multiselect(
+                "Day(s) to include",
+                options=available_days,
+                default=available_days,
+                key="load_day_filter",
+                help="Imaging day parsed from the filename (e.g. 2 = day2, 5 = "
+                     "day5). **'NA' = images with no day in the filename — these "
+                     "are the wash images** (their condition token is 'wash', not "
+                     "'dayN'). Deselect 'NA' to drop wash images, or use the "
+                     "Wash/non-wash control below.",
+            )
+        if available_plates:
+            plate_filter = st.multiselect(
+                "Plate(s) to include",
+                options=available_plates,
+                default=available_plates,
+                key="load_plate_filter",
+                help="Plate token parsed from the filename (e.g. Pl9, P12).",
             )
         wash_choice = st.radio(
             "Wash / non-wash images",
@@ -996,6 +1141,31 @@ def _render_entry():
         wash_filter = False
     elif wash_choice == "Wash only":
         wash_filter = True
+
+    # Treat "all options selected" as "no filter" so the loader skips the step.
+    media_arg = media_filter if media_filter and len(media_filter) < len(available_media) else None
+    day_arg = day_filter if day_filter and len(day_filter) < len(available_days) else None
+    plate_arg = plate_filter if plate_filter and len(plate_filter) < len(available_plates) else None
+
+    # Live count of how many images match the current filter selection.
+    n_match = sum(
+        1 for f in facets
+        if _facet_matches(f, media_arg, wash_filter, day_arg, plate_arg)
+    ) if facets else 0
+    load_all = False
+    if facets:
+        load_all = st.checkbox(
+            f"Load all matching images ({n_match} match the current filters)",
+            value=False,
+            key="load_all_matching",
+            help="Encode every matching image, ignoring the 'Max images' cap. "
+                 "Large selections take longer and use more memory.",
+        )
+        if not (media_arg or day_arg or plate_arg or wash_filter is not None):
+            st.caption(f"No filters active — {n_match} images available in total.")
+        else:
+            st.caption(f"**{n_match}** images match the current filters.")
+    effective_max = n_match if (load_all and n_match) else max_samples
 
     with st.expander("Manual morphology labels (optional)", expanded=False):
         st.checkbox(
@@ -1031,8 +1201,9 @@ def _render_entry():
             with st.spinner("Loading model and computing embeddings…"):
                 try:
                     _load_from_model(
-                        model_path, images_path, metadata_path, max_samples,
-                        media_filter=media_filter, wash_filter=wash_filter,
+                        model_path, images_path, metadata_path, effective_max,
+                        media_filter=media_arg, wash_filter=wash_filter,
+                        day_filter=day_arg, plate_filter=plate_arg,
                     )
                     st.session_state.data_loaded = True
                     st.rerun()
@@ -1543,6 +1714,8 @@ def _load_from_model(
     max_samples: int = 1000,
     media_filter: Optional[List[str]] = None,
     wash_filter: Optional[bool] = None,
+    day_filter: Optional[List[str]] = None,
+    plate_filter: Optional[List[str]] = None,
 ) -> None:
     """
     Load a trained model and compute embeddings from images.
@@ -1703,6 +1876,34 @@ def _load_from_model(
             if len(image_files) == 0:
                 raise FileNotFoundError(
                     f"No {label} images remain after filtering in {images_path}"
+                )
+
+        # Filter by imaging day before loading/encoding
+        if day_filter:
+            allowed_days = set(day_filter)
+            before = len(image_files)
+            image_files = [f for f in image_files if _day_from_filename(f.stem) in allowed_days]
+            logger.info(
+                f"Day filter {sorted(allowed_days)}: kept {len(image_files)}/{before} images"
+            )
+            if len(image_files) == 0:
+                raise FileNotFoundError(
+                    f"No images match the selected day filter {sorted(allowed_days)} "
+                    f"in {images_path}"
+                )
+
+        # Filter by plate before loading/encoding
+        if plate_filter:
+            allowed_plates = set(plate_filter)
+            before = len(image_files)
+            image_files = [f for f in image_files if _plate_from_filename(f.stem) in allowed_plates]
+            logger.info(
+                f"Plate filter {sorted(allowed_plates)}: kept {len(image_files)}/{before} images"
+            )
+            if len(image_files) == 0:
+                raise FileNotFoundError(
+                    f"No images match the selected plate filter {sorted(allowed_plates)} "
+                    f"in {images_path}"
                 )
 
         logger.info(f"Found {len(image_files)} images, loading up to {max_samples}")
@@ -2364,6 +2565,504 @@ def _render_training_params_section():
         )
 
 
+# =============================================================================
+# Primary latent-space view (Tendril VAE): primary z + each TLR, square plots,
+# hover details, click -> x / x̂ + cross-space highlight.
+# =============================================================================
+
+
+def _reconstruct_primary(idx: int) -> Optional[np.ndarray]:
+    """Return the faithful primary-VAE reconstruction x̂ of image ``idx``.
+
+    Uses the wrapper's :meth:`encode_and_decode` (which snapshots/restores skip
+    state, so it does not disturb other callers) and memoises the last few
+    results to avoid re-decoding on every Streamlit rerun. Returns a display-ready
+    uint8 RGB array, or ``None`` if no model/images are loaded.
+    """
+    model = st.session_state.get('model')
+    images = st.session_state.get('images')
+    if model is None or images is None:
+        return None
+    if not (0 <= idx < len(images)):
+        return None
+
+    cache = st.session_state.get('_recon_cache')
+    if isinstance(cache, dict) and idx in cache:
+        return cache[idx]
+
+    conditioning = st.session_state.get('conditioning')
+    try:
+        img_tensor = torch.tensor(
+            images[idx:idx + 1], dtype=torch.float32
+        ).to(model.device)
+        cond_tensor = None
+        if conditioning is not None:
+            cond_tensor = torch.tensor(
+                conditioning[idx:idx + 1], dtype=torch.float32
+            ).to(model.device)
+        with torch.no_grad():
+            recon, _z, _mu, _logvar = model.encode_and_decode(img_tensor, cond_tensor)
+        out = _prepare_image(recon.detach().cpu().numpy().squeeze())
+    except Exception:
+        logger.exception("Primary reconstruction failed for index %s", idx)
+        return None
+
+    if not isinstance(cache, dict):
+        cache = {}
+    cache[idx] = out
+    if len(cache) > 64:  # keep the memo small
+        cache.pop(next(iter(cache)))
+    st.session_state['_recon_cache'] = cache
+    return out
+
+
+def _tlv_space_specs() -> List[dict]:
+    """Ordered latent-space specs: primary first, then each TLR.
+
+    Each spec is ``{key, label, caption, embeddings}``. Tendril keys map in order
+    to layers ℓ=0..3 (thesis notation: TLR = Tendril Latent Representation).
+    """
+    specs: List[dict] = []
+    emb_primary = st.session_state.get('embeddings')
+    if emb_primary is not None:
+        specs.append({
+            "key": "primary",
+            "label": "Primary latent space (z)",
+            "caption": "",
+            "embeddings": emb_primary,
+        })
+    all_emb = st.session_state.get('all_embeddings') or {}
+    for i, key in enumerate(st.session_state.get('tendril_keys', []) or []):
+        emb = all_emb.get(key)
+        if emb is None:
+            continue
+        specs.append({
+            "key": key,
+            "label": f"TLR ℓ={i}  (z_{i})",
+            "caption": f"tendril layer key: {key}",
+            "embeddings": emb,
+        })
+    return specs
+
+
+def _tlv_coords_for_space(key: str, embeddings: np.ndarray, method: str) -> np.ndarray:
+    """2D projection of a latent space, memoised by (space, method, size).
+
+    Reuses the existing projection helpers (PCA matches the thesis figures).
+    """
+    cache = st.session_state.setdefault('_tlv_coords', {})
+    ck = f"{key}:{method}:{len(embeddings)}"
+    coords = cache.get(ck)
+    if coords is None:
+        if method == 'pca':
+            scores, _ev = _fit_pca_full(embeddings)
+            coords = _slice_pca_coords(scores)
+        else:
+            coords = _project_embeddings(embeddings, method)
+        cache[ck] = coords
+    return coords
+
+
+def _tlv_color_options(metadata_df: pd.DataFrame) -> List[str]:
+    """Metadata columns usable for colouring (categorical or numeric)."""
+    # Image/tensor columns are long raw arrays, never colour-able attributes.
+    skip = {'rgb_image', 'transformed_image', 'hat_rgb_image',
+            'hat_hsv_image', 'hat_transformed_image'}
+    opts = ['(none)']
+    for col in metadata_df.columns:
+        if col in skip:
+            continue
+        s = metadata_df[col]
+        first = s.dropna().iloc[0] if len(s.dropna()) > 0 else None
+        if isinstance(first, (np.ndarray, list)):
+            continue
+        if _is_categorical_column(s) or pd.api.types.is_numeric_dtype(s):
+            opts.append(col)
+    return opts
+
+
+def _tlv_color(metadata_df: pd.DataFrame, color_by: Optional[str]) -> Tuple[str, Any, Any]:
+    """Return ``(mode, data, color_map)`` for the chosen colouring."""
+    if not color_by or color_by == '(none)' or color_by not in metadata_df.columns:
+        return "plain", None, None
+    col = metadata_df[color_by]
+    if _is_categorical_column(col):
+        labels, cmap = _build_categorical_marker(col, color_by)
+        return "categorical", labels, cmap
+    return "continuous", col.values, None
+
+
+def _square_latent_figure(coords, metadata_df, color_mode, color_data, color_map,
+                          selected_idx, title, color_by):
+    """Build a SQUARE Plotly scatter for one latent space, with rich hover + the
+    selected image highlighted (so the same image is ringed in every space)."""
+    import plotly.graph_objects as go
+
+    n = len(coords)
+    gidx = np.arange(n)
+    ids = (metadata_df['id'].astype(str).values
+           if 'id' in metadata_df.columns else np.array([''] * n))
+    if color_data is not None and color_mode in ('categorical', 'continuous'):
+        cvals = np.array([f"{v:.3f}" if isinstance(v, (int, float)) and color_mode == 'continuous'
+                          else str(v) for v in color_data])
+    else:
+        cvals = np.array([''] * n)
+    customdata = np.column_stack([gidx.astype(object), ids.astype(object),
+                                  cvals.astype(object)])
+    cby = color_by if color_by and color_by != '(none)' else None
+    hovertemplate = (
+        "global index: %{customdata[0]}<br>"
+        "x: %{x:.3f}   y: %{y:.3f}<br>"
+        "id: %{customdata[1]}"
+        + (f"<br>{cby}: %{{customdata[2]}}" if cby else "")
+        + "<extra></extra>"
+    )
+
+    fig = go.Figure()
+    if color_mode == 'categorical':
+        labels_arr = np.array([str(v) for v in color_data])
+        for label in sorted(set(labels_arr.tolist())):
+            m = labels_arr == label
+            fig.add_trace(go.Scatter(
+                x=coords[m, 0], y=coords[m, 1], mode='markers', name=str(label),
+                marker=dict(size=6, color=color_map.get(label, '#888888'), opacity=0.8),
+                customdata=customdata[m], hovertemplate=hovertemplate,
+            ))
+    elif color_mode == 'continuous':
+        fig.add_trace(go.Scatter(
+            x=coords[:, 0], y=coords[:, 1], mode='markers', showlegend=False,
+            marker=dict(size=6, color=np.asarray(color_data, dtype=float),
+                        colorscale='Viridis', showscale=True,
+                        colorbar=dict(title=cby, thickness=10), opacity=0.85),
+            customdata=customdata, hovertemplate=hovertemplate,
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=coords[:, 0], y=coords[:, 1], mode='markers', showlegend=False,
+            marker=dict(size=6, color='steelblue', opacity=0.8),
+            customdata=customdata, hovertemplate=hovertemplate,
+        ))
+
+    # Cross-space highlight: ring the selected image in this space.
+    if selected_idx is not None and 0 <= selected_idx < n:
+        fig.add_trace(go.Scatter(
+            x=[coords[selected_idx, 0]], y=[coords[selected_idx, 1]], mode='markers',
+            marker=dict(size=18, color='red', symbol='circle-open', line=dict(width=3)),
+            hoverinfo='skip', showlegend=False, name='selected',
+        ))
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14)),
+        template='plotly_white', width=430, height=430,
+        margin=dict(l=10, r=10, t=40, b=10), dragmode='pan',
+        showlegend=(color_mode == 'categorical'),
+        legend=dict(font=dict(size=9), itemsizing='constant',
+                    orientation='h', yanchor='bottom', y=-0.18),
+    )
+    # Equal data aspect → a true square plot box, not a rectangle.
+    fig.update_xaxes(title=None)
+    fig.update_yaxes(title=None, scaleanchor='x', scaleratio=1)
+    return fig
+
+
+def _tlv_capture_click(fig, key: str, space_name: Optional[str] = None) -> None:
+    """Render one latent-space plot and handle its selection.
+
+    A single-point click sets ``clicked_idx`` (the one shared selection index).
+    A **box / lasso selection** of several points records a *region* (its global
+    indices + the space it came from) that the Sprite Map below can mosaic — so
+    the user can draw a portion of the embedding and sprite just that part.
+    Use the plot toolbar's Box Select / Lasso Select tool to drag a region.
+    """
+    try:
+        event = st.plotly_chart(
+            fig, use_container_width=False, on_select="rerun",
+            selection_mode=["points", "box", "lasso"], key=key,
+        )
+    except (TypeError, AttributeError):
+        st.plotly_chart(fig, use_container_width=False)
+        return
+
+    points = None
+    if event is not None:
+        if hasattr(event, 'selection') and event.selection:
+            if hasattr(event.selection, 'points'):
+                points = event.selection.points
+            elif isinstance(event.selection, dict):
+                points = event.selection.get('points')
+        if points is None and isinstance(event, dict):
+            points = event.get('selection', {}).get('points')
+
+    if not points:
+        return
+
+    idxs = _global_indices_from_plotly_points(points)
+
+    # Each Plotly chart REPLAYS its last selection on every rerun. Only act when
+    # THIS chart's selection actually changed since we last saw it — otherwise
+    # the primary plot's lingering box would re-assert itself on every rerun and
+    # clobber a fresh box drawn on a different (e.g. TLR) plot. This per-chart
+    # signature is what makes switching the region between spaces — and the
+    # sprite map's "Clear region" — actually stick.
+    sig_key = f"_tlv_last_sel_{key}"
+    sig = tuple(int(i) for i in idxs)
+    if st.session_state.get(sig_key) == sig:
+        return
+    st.session_state[sig_key] = sig
+
+    if len(idxs) > 1:
+        # Multi-point box/lasso selection → remember it for the sprite map.
+        st.session_state['sprite_region_indices'] = [int(i) for i in idxs]
+        st.session_state['sprite_region_space'] = space_name
+        st.rerun()
+    elif idxs and idxs[0] != st.session_state.get('clicked_idx'):
+        st.session_state.clicked_idx = int(idxs[0])
+        st.rerun()
+
+
+def _render_selected_image_panel(idx: Optional[int]) -> None:
+    """Right-hand panel: original image x, reconstruction x̂, and details."""
+    st.subheader("Selected image")
+    if idx is None:
+        st.info(
+            "Click a point in any latent space (or use **Go to image**) to see the "
+            "original image **x** and its reconstruction **x̂**, and to highlight it "
+            "across every space."
+        )
+        return
+
+    metadata_df = st.session_state.get('metadata_df')
+    images = st.session_state.get('images')
+    n = len(metadata_df) if metadata_df is not None else 0
+    if not (0 <= idx < n):
+        st.warning(f"Index {idx} is out of range (0–{max(0, n - 1)}).")
+        return
+
+    st.markdown(f"**Global index:** {idx}")
+    if metadata_df is not None and 'id' in metadata_df.columns:
+        st.caption(f"id: {metadata_df.iloc[idx]['id']}")
+
+    c_x, c_xhat = st.columns(2)
+    with c_x:
+        st.markdown("**x** — original")
+        if images is not None:
+            try:
+                st.image(_image_array_for_display(idx, images),
+                         use_container_width=True)
+            except Exception:
+                st.warning("Image unavailable.")
+        else:
+            st.warning("No images loaded.")
+    with c_xhat:
+        st.markdown("**x̂** — reconstruction")
+        recon = _reconstruct_primary(idx)
+        if recon is not None:
+            st.image(recon, use_container_width=True)
+        else:
+            st.caption("Reconstruction needs a loaded model.")
+
+    with st.expander("Details", expanded=False):
+        if metadata_df is not None:
+            # Image/tensor columns are long raw arrays, not human-readable
+            # attributes — hide them from the per-image details list.
+            _skip = {'rgb_image', 'transformed_image', 'hat_rgb_image',
+                     'hat_hsv_image', 'hat_transformed_image'}
+            for k, v in metadata_df.iloc[idx].to_dict().items():
+                if k in _skip or isinstance(v, (np.ndarray, list)):
+                    continue
+                st.text(f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}")
+
+
+def _render_model_dataset_summary() -> None:
+    """Describe the loaded model and dataset (params, latent sizes, image count).
+
+    Surfaced at the top of the explorer so a user who clicked *Start exploring
+    (TLV defaults)* can see exactly what model and data they are looking at —
+    the main model parameters (latent-space sizes, conditioning, strategy) and
+    the dataset size/source. All fields are best-effort: anything missing is
+    simply omitted.
+    """
+    config = st.session_state.get('training_config') or {}
+    all_embeddings = st.session_state.get('all_embeddings') or {}
+    metadata_df = st.session_state.get('metadata_df')
+    images = st.session_state.get('images')
+    tendril_keys = _dedupe_tendril_keys_preserve_order(
+        list(st.session_state.get('tendril_keys', []) or [])
+    )
+
+    with st.expander("ℹ️ Loaded model & dataset", expanded=True):
+        col_model, col_data = st.columns(2)
+
+        # --- Model ------------------------------------------------------- #
+        with col_model:
+            st.markdown("**Model**")
+            model_path = st.session_state.get('model_path')
+            if model_path:
+                p = Path(model_path)
+                # The run folder name is usually more descriptive than the file.
+                st.caption(f"`{p.parent.name}/{p.name}`")
+
+            strategy = config.get('strategy')
+            arch = config.get('architecture')
+            nick = (config.get('nicknames') or {}).get(str(strategy)) if strategy is not None else None
+            if strategy is not None or arch:
+                bits = []
+                if strategy is not None:
+                    bits.append(f"Strategy {strategy}")
+                if nick or arch:
+                    bits.append(str(nick or arch))
+                st.markdown("- " + " · ".join(bits))
+
+            # Latent-space sizes (primary z + each TLR), read from embeddings.
+            primary_emb = all_embeddings.get('primary')
+            if primary_emb is not None:
+                st.markdown(f"- Primary latent **z**: {primary_emb.shape[1]}-d")
+            for i, key in enumerate(tendril_keys):
+                emb = all_embeddings.get(key)
+                if emb is not None:
+                    st.markdown(f"- TLR ℓ={i}: {emb.shape[1]}-d")
+
+            cond = config.get('conditional_variables')
+            if cond:
+                st.markdown(f"- Conditioning: {', '.join(map(str, cond))}")
+
+            img_dim = config.get('image_dimension')
+            if img_dim:
+                st.markdown(f"- Input image: {img_dim}×{img_dim}")
+
+        # --- Dataset ----------------------------------------------------- #
+        with col_data:
+            st.markdown("**Dataset**")
+            n_images = (
+                len(images) if images is not None
+                else (len(metadata_df) if metadata_df is not None else None)
+            )
+            if n_images is not None:
+                st.markdown(f"- Images loaded: **{n_images}**")
+
+            images_path = st.session_state.get('images_path')
+            if images_path:
+                st.caption(f"Source: `{images_path}`")
+
+            if metadata_df is not None:
+                st.markdown(f"- Metadata attributes: {metadata_df.shape[1]} columns")
+                if "media" in metadata_df.columns:
+                    vc = metadata_df["media"].astype(str).value_counts()
+                    parts = [f"{m} ({n})" for m, n in vc.head(6).items()]
+                    extra = "" if len(vc) <= 6 else f" +{len(vc) - 6} more"
+                    st.markdown(f"- Media: {', '.join(parts)}{extra}")
+
+
+def _render_tendril_latent_view() -> None:
+    """Clean primary view: the primary latent space and each TLR as square plots,
+    with hover details, click → x / x̂, and a shared cross-space highlight."""
+    st.subheader("Latent space")
+    metadata_df = st.session_state.get('metadata_df')
+    if metadata_df is None:
+        st.info("Load data to explore the latent space.")
+        return
+    _ensure_derived_metadata_columns(metadata_df)
+
+    _render_model_dataset_summary()
+
+    specs = _tlv_space_specs()
+    if not specs:
+        st.warning("No latent embeddings available.")
+        return
+
+    # --- controls -------------------------------------------------------- #
+    # Active-space selector only shown when there is more than one space (i.e.
+    # tendril models loaded); otherwise the layout keeps three columns.
+    space_keys = [s['key'] for s in specs]
+    has_multi_space = len(space_keys) > 1
+    if has_multi_space:
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+    else:
+        c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        color_options = _tlv_color_options(metadata_df)
+        cur = st.session_state.get('color_by') or '(none)'
+        if cur not in color_options:
+            cur = 'manual_formation' if 'manual_formation' in color_options else '(none)'
+        color_by = st.selectbox(
+            "Color by", color_options, index=color_options.index(cur),
+            key="tlv_color_by",
+            help="Colour points by a metadata attribute (e.g. morphology label).",
+        )
+        st.session_state.color_by = None if color_by == '(none)' else color_by
+    with c2:
+        method = st.selectbox(
+            "Projection", ['pca', 'umap', 'tsne'], index=0, key="tlv_proj_method",
+            help="2D projection of each latent space — PCA matches the thesis figures.",
+        )
+    if has_multi_space:
+        with c4:
+            cur_active = st.session_state.get('active_latent_space', 'primary')
+            if cur_active not in space_keys:
+                cur_active = 'primary'
+            label_for = {
+                s['key']: ("Primary (z)" if s['key'] == 'primary' else s['label'])
+                for s in specs
+            }
+            chosen = st.selectbox(
+                "Active space (k-NN)", space_keys,
+                index=space_keys.index(cur_active),
+                format_func=lambda k: label_for.get(k, k),
+                key="tlv_active_space",
+                help="Latent space used as the default target for Neighbor "
+                     "Highlight / k-NN under Advanced analysis.",
+            )
+            if chosen != cur_active:
+                _switch_latent_space(chosen)
+                st.rerun()
+    with c3:
+        n = len(metadata_df)
+        go_idx = st.number_input(
+            "Go to image (index)", min_value=0, max_value=max(0, n - 1), step=1,
+            key="tlv_go_idx",
+        )
+        if st.button("Show this image", key="tlv_go_btn",
+                     use_container_width=True):
+            st.session_state.clicked_idx = int(go_idx)
+            st.rerun()
+
+    selected_idx = st.session_state.get('clicked_idx')
+    color_mode, color_data, color_map = _tlv_color(
+        metadata_df, st.session_state.color_by)
+
+    left, right = st.columns([3, 1])
+    with left:
+        # Primary space, full width.
+        primary = specs[0]
+        coords = _tlv_coords_for_space(primary['key'], primary['embeddings'], method)
+        _tlv_capture_click(
+            _square_latent_figure(coords, metadata_df, color_mode, color_data,
+                                  color_map, selected_idx, primary['label'],
+                                  st.session_state.color_by),
+            key="tlv_space_primary",
+            space_name=primary['key'],
+        )
+        # TLRs in a two-column grid.
+        tlrs = specs[1:]
+        for row_start in range(0, len(tlrs), 2):
+            grid = st.columns(2)
+            for j, spec in enumerate(tlrs[row_start:row_start + 2]):
+                with grid[j]:
+                    coords = _tlv_coords_for_space(
+                        spec['key'], spec['embeddings'], method)
+                    _tlv_capture_click(
+                        _square_latent_figure(
+                            coords, metadata_df, color_mode, color_data, color_map,
+                            selected_idx, spec['label'], st.session_state.color_by),
+                        key=f"tlv_space_{spec['key']}",
+                        space_name=spec['key'],
+                    )
+                    if spec['caption']:
+                        st.caption(spec['caption'])
+    with right:
+        _render_selected_image_panel(selected_idx)
+
+
 def _render_explorer():
     """Render the main explorer interface."""
     if st.session_state.get('data_loaded') and st.session_state.get('metadata_df') is not None:
@@ -2416,26 +3115,40 @@ def _render_explorer():
         st.text(f"Active latent space: {st.session_state.get('active_latent_space', 'primary')}")
         st.text(f"Tendril keys: {st.session_state.get('tendril_keys', [])}")
 
-    # Main layout
-    col_left, col_right = st.columns([2, 1])
+    # Primary view: the primary latent space and each TLR as square plots, with
+    # the selected image's x / x̂ on the right and a shared cross-space highlight.
+    _render_tendril_latent_view()
 
-    with col_left:
-        _render_scatter_plot()
+    # Nuisance-corrected embeddings — built here (before everything below) so the
+    # adjusted spaces are registered and selectable in the sprite map and every
+    # vector tool in Advanced analysis within the same render pass.
+    st.divider()
+    _render_nuisance_correction()
 
-    with col_right:
-        _render_selection_panel()
+    # Sprite map sits right under the projections: box/lasso-select a region on
+    # the plots above, then mosaic just that part of the embedding.
+    st.divider()
+    _render_sprite_map()
 
-    # Multi-space overview for tendril models
-    tendril_keys = st.session_state.get('tendril_keys', [])
-    if tendril_keys:
-        st.divider()
-        st.header("All Latent Spaces")
-        st.caption(
-            "Primary VAE latent space and all tendril VAE latent spaces. "
-            "The large plot above shows the active space; this grid repeats all spaces "
-            "for side-by-side comparison (Primary may appear in both)."
-        )
-        _render_all_latent_spaces()
+    # Advanced tools (neighbors, interpolation, diagnostics, …) are kept
+    # available but out of the way until each is re-worked/optimized.
+    st.divider()
+    with st.expander("Advanced analysis", expanded=False):
+        _render_advanced_sections()
+
+
+def _render_advanced_sections():
+    """Legacy explorer tools, kept available under an expander (not deleted).
+
+    These are the previous stacked sections (All Latent Spaces, neighbor
+    highlight, interpolation, sprite map, and the diagnostics suite). They still
+    read the shared ``clicked_idx`` selection set by the primary view.
+    """
+    # NOTE: the "All Latent Spaces" mini-plot grid was removed — it duplicated
+    # the primary "Latent space" view (which already shows Primary + every TLR).
+    # Its only unique control, switching the active latent space, now lives in
+    # that view (the "Active space (k-NN)" selector). _render_all_latent_spaces()
+    # is kept defined but unused; see src/ready_to_delete.md.
 
     # Auto-compute k-NN after point selection (click-to-neighbors)
     _maybe_auto_compute_neighbors()
@@ -2459,6 +3172,13 @@ def _render_explorer():
     st.divider()
     _render_cluster_enrichment()
 
+    # What does each latent space encode? (linear probes)
+    st.divider()
+    _render_latent_probes()
+
+    # (Nuisance-corrected embeddings moved up — built before this section so its
+    # adjusted spaces are selectable in the vector tools here.)
+
     # Silhouette & Mantel metrics
     st.divider()
     _render_silhouette_mantel()
@@ -2479,9 +3199,7 @@ def _render_explorer():
     st.divider()
     _render_manuscript_figure_export()
 
-    # Sprite map (image mosaic)
-    st.divider()
-    _render_sprite_map()
+    # (Sprite map moved up to sit directly under the latent-space view.)
 
     # Counterfactual conditioning swap diagnostic (Strategy 15 / 16)
     st.divider()
@@ -2575,7 +3293,7 @@ def _render_visualization_controls():
             "Latent space",
             space_options,
             index=space_options.index(st.session_state.active_latent_space),
-            format_func=lambda x: "Primary (mu)" if x == "primary" else f"Tendril: {x}",
+            format_func=lambda x: "Primary (mu)" if x == "primary" else _space_display_label(x),
             key="latent_space_select"
         )
 
@@ -3662,7 +4380,7 @@ def _render_region_profile():
 
     # ── Header + clear button ──────────────────────────────────────────
     region_space = st.session_state.get('selected_region_space', 'primary') or 'primary'
-    space_label = "Primary (z)" if region_space == 'primary' else f"Tendril: {region_space}"
+    space_label = _space_display_label(region_space)
     st.subheader(f"Region Profile — {space_label}")
     col_info, col_clear = st.columns([3, 1])
     with col_info:
@@ -3937,7 +4655,7 @@ def _render_interpolation():
     tendril_keys = st.session_state.get('tendril_keys', [])
     if tendril_keys:
         space_names = ['primary'] + list(tendril_keys)
-        tab_labels = ["Primary (z)"] + [f"Tendril: {k}" for k in tendril_keys]
+        tab_labels = ["Primary (z)"] + [_space_display_label(k) for k in tendril_keys]
         tabs = st.tabs(tab_labels)
         for tab, space_name in zip(tabs, space_names):
             with tab:
@@ -3971,7 +4689,10 @@ def _render_interpolation_for_space(
         "Select start/end points by clicking on plot",
         value=False,
         key=f"use_plot_selection{key_suffix}",
-        help="Show an interactive plot below where you can click to select start and end coordinates"
+        help="Show an interactive plot below where you can click to select start "
+             "and end coordinates. The plot is a Plotly scatter — use its toolbar "
+             "(box-zoom / pan / reset) to zoom into a region before clicking. "
+             "Leave unchecked to instead type the start/end image indices directly."
     )
 
     # Initialize interpolation coordinates in session state if not present
@@ -4032,19 +4753,40 @@ def _render_interpolation_for_space(
             st.rerun()
 
     else:
-        # Manual coordinate entry mode
-        st.info("Enter coordinates manually, or enable 'Select from plot' above")
+        # Image-index entry mode — pick endpoints by index (most users know the
+        # image they want; coords are derived from that image's 2D position).
+        st.info(
+            "Enter the **start** and **end image indices** (or tick *Select by "
+            "clicking on plot* above to pick — and zoom — visually)."
+        )
+        n_imgs = len(embeddings)
+        default_end = 1 if n_imgs > 1 else 0
+        clicked_idx = st.session_state.get('clicked_idx')
         col1, col2 = st.columns(2)
-
         with col1:
-            st.markdown("**Start Point**")
-            x_start = st.number_input("X start", value=0.0, key=f"interp_x_start{key_suffix}", format="%.3f")
-            y_start = st.number_input("Y start", value=0.0, key=f"interp_y_start{key_suffix}", format="%.3f")
-
+            start_idx_in = st.number_input(
+                "Start image index", min_value=0, max_value=n_imgs - 1,
+                value=int(clicked_idx) if clicked_idx is not None else 0,
+                key=f"interp_start_idx{key_suffix}",
+            )
         with col2:
-            st.markdown("**End Point**")
-            x_end = st.number_input("X end", value=1.0, key=f"interp_x_end{key_suffix}", format="%.3f")
-            y_end = st.number_input("Y end", value=1.0, key=f"interp_y_end{key_suffix}", format="%.3f")
+            end_idx_in = st.number_input(
+                "End image index", min_value=0, max_value=n_imgs - 1,
+                value=default_end, key=f"interp_end_idx{key_suffix}",
+            )
+
+        if coords_2d is None:
+            coords_2d = _ensure_space_coords_2d(space_name, embeddings)
+        if coords_2d is not None:
+            x_start, y_start = float(coords_2d[int(start_idx_in), 0]), float(coords_2d[int(start_idx_in), 1])
+            x_end, y_end = float(coords_2d[int(end_idx_in), 0]), float(coords_2d[int(end_idx_in), 1])
+            st.caption(
+                f"Start = image **{int(start_idx_in)}** at "
+                f"({x_start:.2f}, {y_start:.2f}); end = image "
+                f"**{int(end_idx_in)}** at ({x_end:.2f}, {y_end:.2f})."
+            )
+        else:
+            st.warning("No 2D projection available for this space.")
 
     # Interpolation controls (shown regardless of mode)
     n_steps = st.slider("Interpolation steps", 3, 15, 7, key=f"interp_steps{key_suffix}")
@@ -4453,17 +5195,37 @@ def _find_neighbors(
     n_neighbors: int,
     use_projected: bool = False
 ) -> Tuple[List[int], List[float]]:
-    """Find k nearest neighbors of a point in latent or projected space."""
+    """Find k nearest neighbors of a point, restricted to the media subset."""
     embeddings = st.session_state.embeddings
     coords_2d = st.session_state.coords_2d
 
     space = coords_2d if use_projected else embeddings
-    query = space[index]
-    distances = np.linalg.norm(space - query, axis=1)
-    order = np.argsort(distances)
-    neighbor_indices = [int(i) for i in order if i != index][:n_neighbors]
-    neighbor_distances = [float(distances[i]) for i in neighbor_indices]
-    return neighbor_indices, neighbor_distances
+    return _knn_in_subset(space, int(index), n_neighbors)
+
+
+def _ensure_space_coords_2d(
+    space_name: str, embeddings: np.ndarray
+) -> Optional[np.ndarray]:
+    """Return 2D projection coords for a space, computing them on demand.
+
+    The "All Latent Spaces" grid used to pre-compute projections for every
+    tendril space; since it was removed, ``all_coords_2d`` may lack tendril
+    entries. This computes (and caches) them with the active reduction method so
+    "Projected 2D" neighbour search works for any space, not just the primary.
+    """
+    coords = st.session_state.all_coords_2d.get(space_name)
+    if coords is not None:
+        return coords
+    if embeddings is None:
+        return None
+    method = st.session_state.get('reduction_method', 'pca')
+    if method == 'pca':
+        scores, _ev = _fit_pca_full(embeddings)
+        coords = _slice_pca_coords(scores)
+    else:
+        coords = _project_embeddings(embeddings, method)
+    st.session_state.all_coords_2d[space_name] = coords
+    return coords
 
 
 def _maybe_auto_compute_neighbors():
@@ -4482,6 +5244,14 @@ def _maybe_auto_compute_neighbors():
         'neighbor_knn_target_space',
         st.session_state.get('active_latent_space', 'primary'),
     )
+    # Only auto-compute when the selection is genuinely NEW. Otherwise this runs
+    # on every rerun and clobbers manual actions — re-filling neighbours right
+    # after "Clear Neighbors", or overwriting a "Projected 2D" result with the
+    # high-dim default. Manual "Find Neighbors" records the same marker so it is
+    # treated as already handled.
+    selection = (int(clicked_idx), str(target_space))
+    if st.session_state.get('_auto_neighbors_last') == selection:
+        return
     # Determine n_neighbors — reuse whichever slider the user last touched
     # (check suffixed key first, then unsuffixed, fallback to 4).
     # Use explicit None checks (not ``or``) so slider values are respected.
@@ -4490,12 +5260,44 @@ def _maybe_auto_compute_neighbors():
         n_neighbors = st.session_state.get('n_neighbors_slider')
     if n_neighbors is None:
         n_neighbors = 4
+    st.session_state['_auto_neighbors_last'] = selection
     _compute_neighbors_in_space(
         space_name=target_space,
         query_idx=clicked_idx,
         n_neighbors=int(n_neighbors),
         use_projected=False,
     )
+
+
+def _knn_in_subset(
+    space: np.ndarray,
+    query_idx: int,
+    n_neighbors: int,
+) -> Tuple[List[int], List[float]]:
+    """k-NN of ``query_idx`` within the current media subset.
+
+    Distances are the L2 norm of the embedding difference in ``space``.
+    Candidates are restricted to rows passing ``_media_subset_mask`` (the same
+    filter applied to the scatter plots), excluding the query itself, so the
+    gallery never surfaces images hidden by the active media filter. Returns
+    ``(indices, distances)`` ordered nearest-first.
+    """
+    query = space[int(query_idx)]
+    distances_arr = np.linalg.norm(space - query, axis=1)
+
+    metadata_df = st.session_state.get('metadata_df')
+    if metadata_df is not None and len(metadata_df) == space.shape[0]:
+        allowed = np.flatnonzero(_media_subset_mask(metadata_df))
+    else:
+        allowed = np.arange(space.shape[0])
+    allowed = allowed[allowed != int(query_idx)]
+    if allowed.size == 0:
+        return [], []
+
+    order = allowed[np.argsort(distances_arr[allowed])][:n_neighbors]
+    indices = [int(i) for i in order]
+    distances_list = [float(distances_arr[i]) for i in indices]
+    return indices, distances_list
 
 
 def _compute_neighbors_in_space(
@@ -4508,7 +5310,8 @@ def _compute_neighbors_in_space(
 
     Writes results to session state under both suffixed keys (for tendril mode)
     and unsuffixed keys (when space_name is the active space), so the main
-    scatter overlay and neighbor gallery stay in sync.
+    scatter overlay and neighbor gallery stay in sync. Candidates are limited to
+    the current media subset (same filter as the scatter plots).
     """
     embeddings = st.session_state.all_embeddings.get(space_name)
     coords_2d = st.session_state.all_coords_2d.get(space_name)
@@ -4516,11 +5319,7 @@ def _compute_neighbors_in_space(
     if space is None:
         return [], []
 
-    query = space[int(query_idx)]
-    distances_arr = np.linalg.norm(space - query, axis=1)
-    order = np.argsort(distances_arr)
-    indices = [int(i) for i in order if i != int(query_idx)][:n_neighbors]
-    distances_list = [float(distances_arr[i]) for i in indices]
+    indices, distances_list = _knn_in_subset(space, int(query_idx), n_neighbors)
 
     # Store under suffixed keys (tendril-aware)
     tendril_keys = st.session_state.get('tendril_keys', [])
@@ -4582,7 +5381,7 @@ def _render_neighbor_highlight():
     unified_rendered_space = None
 
     if clicked_idx is not None and neighbor_indices:
-        space_label = "Primary (z)" if target_space == "primary" else f"Tendril: {target_space}"
+        space_label = _space_display_label(target_space)
         st.markdown(f"#### Neighbourhood (from plot selection — {space_label})")
         _render_neighbor_gallery(
             clicked_idx,
@@ -4610,9 +5409,8 @@ def _render_neighbor_highlight():
 
     # --- Per-space tabs (manual Find Neighbors + controls) ---
     if tendril_keys:
-        _uq = _dedupe_tendril_keys_preserve_order(list(tendril_keys))
-        space_names = ['primary'] + _uq
-        tab_labels = ["Primary (z)"] + [f"Tendril: {k}" for k in _uq]
+        space_names = _analysis_spaces()  # primary + tendrils + corrected
+        tab_labels = [_space_display_label(s) for s in space_names]
         tabs = st.tabs(tab_labels)
         for tab, space_name in zip(tabs, space_names):
             with tab:
@@ -4654,34 +5452,29 @@ def _render_neighbor_gallery(
         header += f" — {label}"
     header += ":**"
     st.markdown(header)
+    st.caption(
+        "`d` is the distance from the query image to each neighbour in the "
+        "latent space (Euclidean / L2 norm of the embedding difference). "
+        "Smaller `d` = more similar; neighbours are ordered nearest first."
+    )
 
-    n_total = 1 + len(indices)
-    cols = st.columns(min(n_total, 8))
+    # Tiles: query first, then the k neighbours in nearest-first order.
+    tiles = [(query_idx, f"Query [{query_idx}]")]
+    tiles += [(ni, f"[{ni}] d={nd:.3f}") for ni, nd in zip(indices, distances)]
 
-    with cols[0]:
-        st.image(
-            _image_array_for_display(query_idx, images),
-            caption=f"Query [{query_idx}]",
-            use_container_width=True,
-        )
-
-    for j, (ni, nd) in enumerate(zip(indices, distances)):
-        col_idx = (j + 1) % len(cols)
-        with cols[col_idx]:
-            st.image(
-                _image_array_for_display(ni, images),
-                caption=f"[{ni}] d={nd:.3f}",
-                use_container_width=True,
-            )
-
-    if n_total > 8:
-        remaining = list(zip(indices, distances))[7:]
-        cols2 = st.columns(min(len(remaining), 8))
-        for j, (ni, nd) in enumerate(remaining):
-            with cols2[j % len(cols2)]:
+    # Render in fixed-width rows of up to 8 columns. A single column grid that
+    # wraps with modulo overwrites earlier images and renders the overflow at
+    # full width (the "suddenly huge extra images" bug); building one fresh row
+    # of columns per chunk keeps every thumbnail the same size.
+    per_row = 8
+    for row_start in range(0, len(tiles), per_row):
+        row_tiles = tiles[row_start:row_start + per_row]
+        cols = st.columns(per_row)
+        for col, (tile_idx, caption) in zip(cols, row_tiles):
+            with col:
                 st.image(
-                    _image_array_for_display(ni, images),
-                    caption=f"[{ni}] d={nd:.3f}",
+                    _image_array_for_display(tile_idx, images),
+                    caption=caption,
                     use_container_width=True,
                 )
 
@@ -4701,15 +5494,26 @@ def _render_neighbor_highlight_for_space(
     indices_key = f"neighbor_indices{key_suffix}"
     distances_key = f"neighbor_distances{key_suffix}"
 
+    # Keep the "Image index" field in sync with the clicked query point while
+    # still letting the user type a different index. The widget owns its value
+    # via its session-state key, so we update that key (not the `value=` arg,
+    # which Streamlit ignores once the widget exists) whenever the click
+    # selection changes.
+    query_idx_key = f"neighbor_query_idx{key_suffix}"
+    synced_key = f"_neighbor_query_synced{key_suffix}"
+    if query_idx_key not in st.session_state:
+        st.session_state[query_idx_key] = int(clicked_idx) if clicked_idx is not None else 0
+    if clicked_idx is not None and st.session_state.get(synced_key) != clicked_idx:
+        st.session_state[query_idx_key] = int(clicked_idx)
+        st.session_state[synced_key] = int(clicked_idx)
+
     col1, col2, col3 = st.columns(3)
     with col1:
-        default_idx = clicked_idx if clicked_idx is not None else 0
         neighbor_query_idx = st.number_input(
             "Image index",
             min_value=0,
             max_value=len(embeddings) - 1,
-            value=default_idx,
-            key=f"neighbor_query_idx{key_suffix}"
+            key=query_idx_key,
         )
     with col2:
         n_neighbors = st.slider(
@@ -4721,24 +5525,48 @@ def _render_neighbor_highlight_for_space(
         neighbor_space = st.radio(
             "Neighbor space",
             ["High-dimensional", "Projected 2D"],
-            key=f"neighbor_space_radio{key_suffix}"
+            key=f"neighbor_space_radio{key_suffix}",
+            help=(
+                "Which representation distances are measured in:\n\n"
+                "- **High-dimensional** — the full latent embedding (every "
+                "dimension of this space). This is the faithful similarity and "
+                "the usual choice.\n"
+                "- **Projected 2D** — only the two PCA/UMAP/t-SNE coordinates "
+                "drawn on the scatter. Matches what the plot shows, but discards "
+                "most of the information, so neighbours can differ."
+            ),
         )
 
     if st.button("Find Neighbors", key=f"find_neighbors_btn{key_suffix}", type="primary"):
         use_projected = (neighbor_space == "Projected 2D")
-        # Use the space-specific embeddings and coords
-        space = coords_2d if use_projected else embeddings
+        # Use the space-specific embeddings or its 2D projection (computed on
+        # demand for tendril spaces, which are no longer pre-projected).
+        if use_projected:
+            space = coords_2d if coords_2d is not None else \
+                _ensure_space_coords_2d(space_name, embeddings)
+        else:
+            space = embeddings
         if space is not None:
-            query = space[int(neighbor_query_idx)]
-            distances_arr = np.linalg.norm(space - query, axis=1)
-            order = np.argsort(distances_arr)
-            indices = [int(i) for i in order if i != int(neighbor_query_idx)][:n_neighbors]
-            distances_list = [float(distances_arr[i]) for i in indices]
+            indices, distances_list = _knn_in_subset(
+                space, int(neighbor_query_idx), n_neighbors
+            )
             st.session_state[indices_key] = indices
             st.session_state[distances_key] = distances_list
-            # Set clicked_idx so the scatter plot highlights the query
+            # Highlight the query on the scatter, route the unified gallery to
+            # THIS space, and mark the selection as already handled so the
+            # auto-compute pass does not overwrite this (possibly Projected-2D)
+            # result with the high-dimensional default.
             st.session_state.clicked_idx = int(neighbor_query_idx)
+            st.session_state.neighbor_knn_target_space = space_name
+            st.session_state['_auto_neighbors_last'] = (
+                int(neighbor_query_idx), str(space_name)
+            )
             st.rerun()
+        else:
+            st.warning(
+                "Projected-2D coordinates are unavailable for this space — "
+                "try **High-dimensional** instead."
+            )
 
     # Display results (skip gallery if unified panel already rendered for this space)
     neighbor_indices = st.session_state.get(indices_key)
@@ -4749,11 +5577,20 @@ def _render_neighbor_highlight_for_space(
             st.caption("Gallery shown in the unified section above.")
         else:
             query_idx = st.session_state.get('clicked_idx', neighbor_query_idx)
-            _render_neighbor_gallery(query_idx, neighbor_indices, neighbor_distances)
+            _render_neighbor_gallery(
+                query_idx, neighbor_indices, neighbor_distances,
+                label=_space_display_label(space_name),
+            )
 
         if st.button("Clear Neighbors", key=f"clear_neighbors_btn{key_suffix}"):
             st.session_state[indices_key] = None
             st.session_state[distances_key] = None
+            # Suppress the auto-recompute that would otherwise immediately refill
+            # these neighbours on the next rerun (the reason Clear "did nothing").
+            ci = st.session_state.get('clicked_idx')
+            if ci is not None:
+                st.session_state.neighbor_knn_target_space = space_name
+                st.session_state['_auto_neighbors_last'] = (int(ci), str(space_name))
             st.rerun()
 
 
@@ -4776,8 +5613,19 @@ def _render_cross_space_neighbor_panels():
             st.info("Load a tendril model to compare spaces.")
             return
 
-        space_names = ['primary'] + list(tendril_keys)
+        space_names = _analysis_spaces()  # primary + tendrils + corrected
         n_images = len(images)
+
+        st.caption(
+            "**What this shows:** pick one or more *anchor* images. For each "
+            "anchor, every latent space (Primary z and each TLR) reports the "
+            "**same anchor's** k nearest neighbours **measured in that space**. "
+            "Compare the rows to see how the neighbourhood changes from space to "
+            "space — the same anchor can have different neighbours in Primary vs "
+            "TLR ℓ=0, etc. `d` is the distance in that space (smaller = closer). "
+            "It is normal for an image to recur across rows (it is simply a "
+            "neighbour in more than one space)."
+        )
 
         # --- Controls ---
         ctrl1, ctrl2 = st.columns(2)
@@ -4817,45 +5665,177 @@ def _render_cross_space_neighbor_panels():
             return
 
         # --- Compute and render ---
+        # Layout: the anchor image is shown ONCE per anchor; then one labelled
+        # ROW per latent space holds that space's k neighbours side by side. This
+        # avoids the old column-stacking, where each space was a vertical column
+        # and rows had no shared meaning (the source of the confusion).
         for anchor_idx in anchors:
             st.markdown(f"#### Anchor: image {anchor_idx}")
 
-            space_cols = st.columns(len(space_names))
-            for col, space_name in zip(space_cols, space_names):
-                with col:
-                    space_label = (
-                        "Primary (z)" if space_name == "primary"
-                        else f"Tendril: {space_name}"
-                    )
-                    st.markdown(f"**{space_label}**")
+            head_l, head_r = st.columns([1, 5])
+            with head_l:
+                st.image(
+                    _image_array_for_display(anchor_idx, images),
+                    caption=f"Anchor [{anchor_idx}]",
+                    use_container_width=True,
+                )
+            with head_r:
+                st.caption(
+                    "Each row below is one latent space; the thumbnails are this "
+                    "anchor's nearest neighbours **in that space**, nearest first."
+                )
 
-                    emb = all_embeddings.get(space_name)
-                    if emb is None:
-                        st.caption("No embeddings")
-                        continue
+            for space_name in space_names:
+                space_label = _space_display_label(space_name)
+                emb = all_embeddings.get(space_name)
+                if emb is None:
+                    st.markdown(f"**{space_label}** — no embeddings")
+                    continue
 
-                    query = emb[anchor_idx]
-                    dists = np.linalg.norm(emb - query, axis=1)
-                    order = np.argsort(dists)
-                    indices = [int(i) for i in order if i != anchor_idx][:k]
-                    distances = [float(dists[i]) for i in indices]
-
-                    # Query thumbnail
-                    st.image(
-                        _image_array_for_display(anchor_idx, images),
-                        caption=f"Query [{anchor_idx}]",
-                        use_container_width=True,
-                    )
-                    # Neighbor thumbnails
-                    for ni, nd in zip(indices, distances):
-                        st.image(
-                            _image_array_for_display(ni, images),
-                            caption=f"[{ni}] d={nd:.3f}",
-                            use_container_width=True,
-                        )
+                indices, distances = _knn_in_subset(emb, int(anchor_idx), k)
+                st.markdown(f"**{space_label}**")
+                if not indices:
+                    st.caption("No neighbours in the current media subset.")
+                    continue
+                nbrs = list(zip(indices, distances))
+                per_row = 8
+                for row_start in range(0, len(nbrs), per_row):
+                    nbr_cols = st.columns(per_row)
+                    for col, (ni, nd) in zip(nbr_cols, nbrs[row_start:row_start + per_row]):
+                        with col:
+                            st.image(
+                                _image_array_for_display(ni, images),
+                                caption=f"[{ni}] d={nd:.3f}",
+                                use_container_width=True,
+                            )
 
             if anchor_idx != anchors[-1]:
                 st.divider()
+
+
+############################################################################
+# Tendril (TLR) level-ℓ feature-map rendering
+############################################################################
+
+# View modes for the TLR sweep / slider tabs. "Final image" runs the full
+# primary decoder (the old behaviour, dominated by skips); the feature-map modes
+# render the tendril's OWN reconstructed skip feature x̂_ℓ — the representation
+# at level ℓ — so individual TLR dimensions visibly change something.
+_TLR_VIEW_FINAL = "Final image"
+_TLR_VIEW_HEATMAP = "Feature map (heatmap)"
+_TLR_VIEW_PCA = "Feature map (PCA-RGB)"
+_TLR_VIEW_DIFF = "Change vs centre (amplified)"
+_TLR_VIEW_MODES = [_TLR_VIEW_DIFF, _TLR_VIEW_HEATMAP, _TLR_VIEW_PCA, _TLR_VIEW_FINAL]
+_TLR_FEATURE_VIEWS = (_TLR_VIEW_HEATMAP, _TLR_VIEW_PCA, _TLR_VIEW_DIFF)
+
+
+def _decode_tendril_feature(space_name: str, z_values) -> Optional[np.ndarray]:
+    """Decode a TLR latent into its reconstructed skip feature map ``x̂_ℓ``.
+
+    Returns a ``(C, H, W)`` float array — the representation the tendril VAE
+    actually models at level ℓ — or ``None`` if tendrils are unavailable.
+    """
+    model = st.session_state.get('model')
+    if model is None or not model.has_tendrils():
+        return None
+    z_tensor = torch.tensor(
+        np.asarray(z_values, dtype=np.float32)
+    ).unsqueeze(0).to(model.device)
+    with torch.no_grad():
+        feat = model.decode_tendril(space_name, z_tensor)
+    arr = feat.detach().cpu().numpy()
+    if arr.ndim == 4:
+        arr = arr[0]
+    return arr  # (C, H, W)
+
+
+def _feature_map_to_rgb(
+    feat: np.ndarray,
+    mode: str,
+    *,
+    norm: Optional[Tuple[float, float]] = None,
+    pca=None,
+) -> np.ndarray:
+    """Render a ``(C, H, W)`` feature map as a uint8 RGB image.
+
+    ``mode == _TLR_VIEW_HEATMAP``: collapse channels by L2 norm → colormap.
+    ``mode == _TLR_VIEW_PCA``: project channels onto 3 PCA components → RGB.
+
+    Optional ``norm`` (lo, hi) and a pre-fitted ``pca`` let a caller render a
+    whole sweep row on a *shared* scale/basis so changes are comparable frame to
+    frame (otherwise each frame is normalised independently).
+    """
+    if feat.ndim != 3:
+        feat = np.atleast_3d(feat)
+    c, h, w = feat.shape
+
+    if mode == _TLR_VIEW_PCA and c >= 3:
+        flat = feat.reshape(c, h * w).T  # (H*W, C)
+        if pca is not None:
+            comps = pca.transform(flat)
+        else:
+            try:
+                from sklearn.decomposition import PCA
+                comps = PCA(n_components=3, random_state=0).fit_transform(flat)
+            except Exception:
+                comps = flat[:, :3]
+        comps = comps.reshape(h, w, 3)
+        out = np.zeros((h, w, 3), dtype=np.float32)
+        for k in range(3):
+            ch = comps[..., k]
+            lo, hi = np.percentile(ch, 2), np.percentile(ch, 98)
+            out[..., k] = np.clip((ch - lo) / (hi - lo + 1e-8), 0, 1)
+        return (out * 255).astype(np.uint8)
+
+    # Heatmap (default / PCA fallback when channels < 3).
+    mag = np.linalg.norm(feat, axis=0)  # (H, W)
+    if norm is not None:
+        lo, hi = norm
+    else:
+        lo, hi = float(np.percentile(mag, 2)), float(np.percentile(mag, 98))
+    normed = np.clip((mag - lo) / (hi - lo + 1e-8), 0, 1)
+    from matplotlib import cm
+    rgba = cm.viridis(normed)  # (H, W, 4)
+    return (rgba[..., :3] * 255).astype(np.uint8)
+
+
+def _feature_diff_to_rgb(
+    feat: np.ndarray,
+    center: np.ndarray,
+    *,
+    hi: Optional[float] = None,
+) -> np.ndarray:
+    """Render the per-pixel **change** ‖feat − center‖ as a uint8 RGB heatmap.
+
+    The absolute feature maps are dominated by a large z-independent baseline, so
+    a single TLR dimension's ~1–4% effect is invisible there. The difference map
+    subtracts that baseline and auto-scales, making the (spatially concentrated)
+    change clearly visible. ``hi`` lets a sweep row share one scale.
+    """
+    diff = np.linalg.norm(feat - center, axis=0)  # (H, W)
+    top = hi if hi is not None else float(np.percentile(diff, 99) + 1e-8)
+    normed = np.clip(diff / (top + 1e-8), 0, 1)
+    from matplotlib import cm
+    return (cm.magma(normed)[..., :3] * 255).astype(np.uint8)
+
+
+def _feature_change_fraction(feat: np.ndarray, center: np.ndarray) -> float:
+    """Relative L2 change of a feature map vs the centre (for a readout)."""
+    denom = float(np.linalg.norm(center)) + 1e-8
+    return float(np.linalg.norm(feat - center) / denom)
+
+
+def _fit_row_pca(feats: List[np.ndarray]):
+    """Fit one PCA(3) over the channel vectors of all feature maps in a sweep
+    row, so every frame shares a colour basis. Returns ``None`` on failure."""
+    try:
+        from sklearn.decomposition import PCA
+        stacked = np.concatenate(
+            [f.reshape(f.shape[0], -1).T for f in feats], axis=0
+        )
+        return PCA(n_components=3, random_state=0).fit(stacked)
+    except Exception:
+        return None
 
 
 ############################################################################
@@ -4866,7 +5846,8 @@ def _generate_dimension_sweep(
     index: int,
     step_size: float,
     n_steps: int,
-    dim_indices: Optional[List[int]] = None
+    dim_indices: Optional[List[int]] = None,
+    view_mode: str = _TLR_VIEW_FINAL,
 ) -> Tuple[Optional[List[List[np.ndarray]]], Optional[List[float]], Optional[List[int]]]:
     """
     Generate dimension sweep images.
@@ -4876,9 +5857,13 @@ def _generate_dimension_sweep(
         step_size: Step size for perturbation
         n_steps: Steps per side (total columns = 2*n_steps + 1)
         dim_indices: Optional list of dimension indices to sweep (None = all)
+        view_mode: ``_TLR_VIEW_FINAL`` renders the full decoded image; the
+            feature-map modes store the tendril's raw ``(C, H, W)`` skip feature
+            ``x̂_ℓ`` for the display to colourise per-row.
 
     Returns:
-        all_decoded: List of rows, each row is a list of images
+        all_decoded: List of rows; each row is a list of images (or, in
+            feature-map modes, raw (C,H,W) feature arrays)
         offsets: List of offset values
         swept_dims: List of dimension indices that were swept
     """
@@ -4922,6 +5907,12 @@ def _generate_dimension_sweep(
     total_images = len(dim_indices) * len(offsets)
     progress_bar = st.progress(0, text="Generating dimension sweep...")
 
+    feature_view = (
+        view_mode in _TLR_FEATURE_VIEWS
+        and active_space != 'primary'
+        and model.has_tendrils()
+    )
+
     for row_idx, d in enumerate(dim_indices):
         row_images = []
         for off in offsets:
@@ -4930,6 +5921,13 @@ def _generate_dimension_sweep(
             z_tensor = torch.tensor(z, dtype=torch.float32).unsqueeze(0).to(model.device)
 
             with torch.no_grad():
+                if feature_view:
+                    # Level-ℓ representation: the tendril's reconstructed skip
+                    # feature x̂_ℓ (raw C,H,W), colourised later by the display.
+                    feat = model.decode_tendril(active_space, z_tensor)
+                    arr = feat.detach().cpu().numpy()
+                    row_images.append(arr[0] if arr.ndim == 4 else arr)
+                    continue
                 if active_space != 'primary' and model.has_tendrils():
                     decoded = model.decode_with_tendril_modification(
                         active_space, z_tensor, skip, z_primary, cond_tensor
@@ -4950,12 +5948,54 @@ def _generate_dimension_sweep(
     return all_decoded, offsets, dim_indices
 
 
+def _reconstruct_image(index: int) -> Optional[np.ndarray]:
+    """Full VAE reconstruction x̂ of image ``index`` (encode → decode via skips).
+
+    Uses the image's own conditioning; cached per (model, index) so it doesn't
+    recompute on every widget interaction.
+    """
+    model = st.session_state.get('model')
+    images = st.session_state.get('images')
+    if model is None or images is None or not (0 <= index < len(images)):
+        return None
+    cache = st.session_state.setdefault('_recon_cache', {})
+    ck = (st.session_state.get('model_path'), int(index))
+    if ck in cache:
+        return cache[ck]
+    conditioning = st.session_state.get('conditioning')
+    img_tensor = torch.tensor(
+        images[index:index + 1], dtype=torch.float32
+    ).to(model.device)
+    cond_tensor = None
+    if conditioning is not None:
+        cond_tensor = torch.tensor(
+            conditioning[index:index + 1], dtype=torch.float32
+        ).to(model.device)
+    with torch.no_grad():
+        z = model.encode(img_tensor, cond_tensor)
+        skip = model.get_last_skip()
+        decoded = model.decode_with_skip(z, skip, cond_tensor)
+    arr = decoded.cpu().numpy().squeeze()
+    cache[ck] = arr
+    return arr
+
+
 def _render_dimension_sweep():
     """Render the dimension sweep section."""
     st.subheader("Latent Dimension Sweep")
     st.caption(
         "Perturb each latent dimension individually to see what it controls. "
-        "Each row is one dimension; the center column (highlighted) is the unperturbed reconstruction."
+        "Each row is one dimension (ordered **most-variable first**); the centre "
+        "column (highlighted) is the unperturbed reconstruction."
+    )
+    st.info(
+        "**If you see little or no change across a row, that is expected for this "
+        "model.** The decoder reconstructs largely from the encoder's *skip "
+        "connections* (cached from the source image), so the bottleneck latent "
+        "z — and the TLRs — have limited influence on the output (skip dominance "
+        "/ partial posterior collapse; see the Diagnostics section). Larger step "
+        "sizes make any effect easier to spot. The **conditioning (HSV) sliders** "
+        "in *Latent sliders* are the controls that visibly change the image."
     )
 
     model = st.session_state.model
@@ -4971,7 +6011,7 @@ def _render_dimension_sweep():
     tendril_keys = st.session_state.get('tendril_keys', [])
     if tendril_keys:
         space_names = ['primary'] + list(tendril_keys)
-        tab_labels = ["Primary (z)"] + [f"Tendril: {k}" for k in tendril_keys]
+        tab_labels = ["Primary (z)"] + [_space_display_label(k) for k in tendril_keys]
         tabs = st.tabs(tab_labels)
         for tab, space_name in zip(tabs, space_names):
             with tab:
@@ -4995,6 +6035,7 @@ def _render_dimension_sweep_for_space(
 ):
     """Render dimension sweep controls and results for a single latent space."""
     latent_dim = embeddings.shape[1]
+    images = st.session_state.get('images')
     clicked_idx = st.session_state.get('clicked_idx')
 
     result_key = f"sweep_results{key_suffix}"
@@ -5012,14 +6053,62 @@ def _render_dimension_sweep_for_space(
     with col2:
         step_size = st.slider(
             "Step size",
-            min_value=0.1, max_value=2.0, value=0.5, step=0.1,
-            key=f"sweep_step_size{key_suffix}"
+            min_value=0.1, max_value=4.0, value=0.5, step=0.1,
+            key=f"sweep_step_size{key_suffix}",
+            help="How far each step moves the dimension (in latent units).",
         )
     with col3:
         n_steps = st.slider(
             "Steps per side",
             min_value=1, max_value=5, value=2,
-            key=f"sweep_n_steps{key_suffix}"
+            key=f"sweep_n_steps{key_suffix}",
+            help="How many steps to take on EACH side of the original value, so "
+                 "a row has 2×(steps per side)+1 columns. Step size sets the "
+                 "spacing between columns; steps-per-side sets how FAR out the "
+                 "sweep reaches (max offset = steps per side × step size). "
+                 "E.g. step size 0.5 with 2 steps per side → offsets "
+                 "−1.0, −0.5, 0, +0.5, +1.0.",
+        )
+
+    # Selected image: original x and its full reconstruction x̂ (reference).
+    if images is not None:
+        ref_orig, ref_recon, _ref_sp1, _ref_sp2 = st.columns(4)
+        with ref_orig:
+            st.markdown("**Original x:**")
+            st.image(
+                _image_array_for_display(int(sweep_idx), images),
+                caption=f"Index {int(sweep_idx)}",
+                use_container_width=True,
+            )
+        with ref_recon:
+            st.markdown("**Reconstruction x̂:**")
+            recon = _reconstruct_image(int(sweep_idx))
+            if recon is not None:
+                st.image(
+                    _prepare_image(recon),
+                    caption="x̂ (encode → decode)",
+                    use_container_width=True,
+                )
+            else:
+                st.caption("unavailable")
+
+    # View mode — only meaningful for tendril (TLR) spaces, where the final
+    # image barely moves but the level-ℓ feature map does.
+    is_tendril = space_name != 'primary'
+    view_mode = _TLR_VIEW_FINAL
+    if is_tendril:
+        view_mode = st.radio(
+            "View",
+            _TLR_VIEW_MODES,
+            index=0,  # default to the difference view (the only one that shows it)
+            horizontal=True,
+            key=f"sweep_view_mode{key_suffix}",
+            help="**Change vs centre** shows ‖x̂_ℓ(perturbed) − x̂_ℓ(centre)‖ — the "
+                 "only view where a single dimension's small effect is visible, "
+                 "because it subtracts the large z-independent baseline. "
+                 "**Heatmap / PCA-RGB** show the absolute level-ℓ feature x̂_ℓ "
+                 "(dominated by that baseline, so they barely move). **Final "
+                 "image** runs the whole primary decoder (skip-dominated).",
         )
 
     # Variance-based filtering
@@ -5040,12 +6129,11 @@ def _render_dimension_sweep_for_space(
     st.caption(f"Will generate {total_images} images ({top_k if limit_dims else latent_dim} dims x {2*n_steps+1} offsets)")
 
     if st.button("Generate Dimension Sweep", type="primary", key=f"gen_sweep_btn{key_suffix}"):
-        # Determine which dimensions to sweep
-        dim_indices = None
-        if limit_dims:
-            var_per_dim = np.var(embeddings, axis=0)
-            dim_indices = list(np.argsort(var_per_dim)[::-1][:top_k])
-            dim_indices.sort()  # Sort by index for display
+        # Always sweep in most-variable-first order so the informative
+        # dimensions are at the top (and limit to top-K when requested).
+        var_per_dim = np.var(embeddings, axis=0)
+        order = list(np.argsort(var_per_dim)[::-1])
+        dim_indices = order[:top_k] if limit_dims else order
 
         # Temporarily set active space and embeddings for decode
         orig_active = st.session_state.get('active_latent_space', 'primary')
@@ -5054,7 +6142,7 @@ def _render_dimension_sweep_for_space(
         st.session_state.embeddings = embeddings
 
         all_decoded, offsets, swept_dims = _generate_dimension_sweep(
-            int(sweep_idx), step_size, n_steps, dim_indices
+            int(sweep_idx), step_size, n_steps, dim_indices, view_mode=view_mode
         )
 
         st.session_state.active_latent_space = orig_active
@@ -5068,6 +6156,7 @@ def _render_dimension_sweep_for_space(
                 'index': int(sweep_idx),
                 'step_size': step_size,
                 'n_steps': n_steps,
+                'view_mode': view_mode,
             }
             st.rerun()
 
@@ -5077,6 +6166,8 @@ def _render_dimension_sweep_for_space(
         all_decoded = sweep['all_decoded']
         offsets = sweep['offsets']
         swept_dims = sweep['swept_dims']
+        sweep_view = sweep.get('view_mode', _TLR_VIEW_FINAL)
+        feature_view = sweep_view in _TLR_FEATURE_VIEWS
 
         st.markdown(
             f"**Image index:** {sweep['index']} | "
@@ -5084,6 +6175,23 @@ def _render_dimension_sweep_for_space(
             f"**Step:** {sweep['step_size']} | "
             f"**Total images:** {len(swept_dims) * len(offsets)}"
         )
+        if feature_view:
+            if sweep_view == _TLR_VIEW_DIFF:
+                st.caption(
+                    "Each cell is the **change** ‖x̂_ℓ(perturbed) − x̂_ℓ(centre)‖ "
+                    "for that offset — the centre column is the reference (blank). "
+                    "This subtracts the large z-independent baseline so a single "
+                    "dimension's small effect becomes visible; brighter = more "
+                    "change. The % under each cell is the relative L2 change."
+                )
+            else:
+                st.caption(
+                    f"Showing the tendril's level-ℓ feature map x̂_ℓ "
+                    f"(**{sweep_view}**), scaled consistently within each row. "
+                    "Note: absolute maps are dominated by a z-independent "
+                    "baseline, so per-dimension effects look tiny here — use "
+                    f"**{_TLR_VIEW_DIFF}** to actually see them."
+                )
 
         center_col_idx = len(offsets) // 2  # Index of the 0-offset column
 
@@ -5098,15 +6206,41 @@ def _render_dimension_sweep_for_space(
                 st.markdown(label)
 
         # Rows
+        is_diff = sweep_view == _TLR_VIEW_DIFF
         for row_idx, (d, row_images) in enumerate(zip(swept_dims, all_decoded)):
+            # For feature-map rows, precompute a shared scale/basis so all frames
+            # in the row are directly comparable.
+            row_norm = None
+            row_pca = None
+            center_feat = row_images[center_col_idx] if feature_view else None
+            diff_hi = None
+            if feature_view and not is_diff:
+                mags = np.concatenate(
+                    [np.linalg.norm(f, axis=0).ravel() for f in row_images]
+                )
+                row_norm = (float(np.percentile(mags, 2)), float(np.percentile(mags, 98)))
+                if sweep_view == _TLR_VIEW_PCA:
+                    row_pca = _fit_row_pca(row_images)
+            if is_diff:
+                all_d = np.concatenate([
+                    np.linalg.norm(f - center_feat, axis=0).ravel() for f in row_images
+                ])
+                diff_hi = float(np.percentile(all_d, 99) + 1e-8)
+
             row_cols = st.columns(n_cols)
             with row_cols[0]:
                 st.markdown(f"**z[{d}]**")
             for j, img in enumerate(row_images):
                 with row_cols[j + 1]:
-                    display_img = _prepare_image(img)
-                    caption = f"{offsets[j]:+.2f}"
-                    if j == center_col_idx:
+                    if is_diff:
+                        display_img = _feature_diff_to_rgb(img, center_feat, hi=diff_hi)
+                    elif feature_view:
+                        display_img = _feature_map_to_rgb(
+                            img, sweep_view, norm=row_norm, pca=row_pca
+                        )
+                    else:
+                        display_img = _prepare_image(img)
+                    if j == center_col_idx and not is_diff:
                         # Highlight center column with a border via HTML
                         import base64
                         from io import BytesIO
@@ -5124,6 +6258,9 @@ def _render_dimension_sweep_for_space(
                         st.caption("center")
                     else:
                         st.image(display_img, use_container_width=True)
+                        if is_diff:
+                            pct = 100.0 * _feature_change_fraction(img, center_feat)
+                            st.caption("centre" if j == center_col_idx else f"{pct:.1f}%")
 
         if st.button("Clear Sweep Results", key=f"clear_sweep_btn{key_suffix}"):
             st.session_state[result_key] = None
@@ -5208,7 +6345,7 @@ def _render_latent_sliders():
     tendril_keys = st.session_state.get('tendril_keys', [])
     if tendril_keys:
         space_names = ['primary'] + list(tendril_keys)
-        tab_labels = ["Primary (z)"] + [f"Tendril: {k}" for k in tendril_keys]
+        tab_labels = ["Primary (z)"] + [_space_display_label(k) for k in tendril_keys]
         tabs = st.tabs(tab_labels)
         for tab, space_name in zip(tabs, space_names):
             with tab:
@@ -5267,6 +6404,25 @@ def _render_latent_sliders_for_space(
             st.session_state[z_values_key] = base_mu
             st.rerun()
 
+    # View mode (TLR spaces only): final image vs the level-ℓ feature map, which
+    # updates live as you move a slider.
+    is_tendril = space_name != 'primary'
+    view_mode = _TLR_VIEW_FINAL
+    if is_tendril:
+        view_mode = st.radio(
+            "View",
+            _TLR_VIEW_MODES,
+            index=0,
+            horizontal=True,
+            key=f"slider_view_mode{key_suffix}",
+            help="**Change vs base** renders ‖x̂_ℓ(now) − x̂_ℓ(loaded)‖ live as you "
+                 "drag a slider — the only view where a single dimension's small "
+                 "effect is visible. **Heatmap / PCA-RGB** show the absolute "
+                 "level-ℓ feature (dominated by a z-independent baseline, so they "
+                 "barely move). **Final image** needs Decode and barely moves.",
+        )
+    feature_view = view_mode in _TLR_FEATURE_VIEWS
+
     # Initialize slider values if not set
     if st.session_state[z_values_key] is None:
         idx = clicked_idx if clicked_idx is not None else 0
@@ -5275,10 +6431,11 @@ def _render_latent_sliders_for_space(
 
     z_values = st.session_state[z_values_key]
 
-    # Show original image for reference
-    col_orig, col_decoded = st.columns(2)
+    # Show original + decoded side by side, kept small (1/4 width each) so the
+    # whole panel — images plus all sliders — fits on screen at once.
+    col_orig, col_decoded, _sp_a, _sp_b = st.columns(4)
     with col_orig:
-        st.markdown("**Original image:**")
+        st.markdown("**Original:**")
         st.image(
             _image_array_for_display(st.session_state[base_index_key], images),
             caption=f"Index {st.session_state[base_index_key]}",
@@ -5298,37 +6455,68 @@ def _render_latent_sliders_for_space(
         key_suffix=key_suffix,
     )
 
-    # Decode button
-    if st.button("Decode", type="primary", key=f"decode_sliders_btn{key_suffix}"):
-        with st.spinner("Decoding..."):
-            # Temporarily set active space for decode
-            orig_active = st.session_state.get('active_latent_space', 'primary')
-            st.session_state.active_latent_space = space_name
-            decoded = _decode_from_sliders(
-                st.session_state[base_index_key],
-                st.session_state[z_values_key],
-                cond_override=cond_override,
-            )
-            st.session_state.active_latent_space = orig_active
-            if decoded is not None:
-                st.session_state[decoded_img_key] = decoded
-                st.rerun()
-            else:
-                st.error("Decoding failed.")
+    # Decode button — only needed for the (slow) full-image decode. The
+    # feature-map modes render live below, so no button is required.
+    if not feature_view:
+        if st.button("Decode", type="primary", key=f"decode_sliders_btn{key_suffix}"):
+            with st.spinner("Decoding..."):
+                # Temporarily set active space for decode
+                orig_active = st.session_state.get('active_latent_space', 'primary')
+                st.session_state.active_latent_space = space_name
+                decoded = _decode_from_sliders(
+                    st.session_state[base_index_key],
+                    st.session_state[z_values_key],
+                    cond_override=cond_override,
+                )
+                st.session_state.active_latent_space = orig_active
+                if decoded is not None:
+                    st.session_state[decoded_img_key] = decoded
+                    st.rerun()
+                else:
+                    st.error("Decoding failed.")
 
-    # Show decoded result
-    decoded_img = st.session_state.get(decoded_img_key)
+    # Show result.
     with col_decoded:
-        if decoded_img is not None:
-            st.markdown("**Decoded from sliders:**")
-            st.image(
-                _prepare_image(decoded_img),
-                caption="Slider decode",
-                use_container_width=True
-            )
+        if feature_view:
+            # Live level-ℓ feature map for the CURRENT slider values.
+            feat = _decode_tendril_feature(space_name, st.session_state[z_values_key])
+            if feat is None:
+                st.markdown("**Level-ℓ map:**")
+                st.caption("Feature map unavailable.")
+            elif view_mode == _TLR_VIEW_DIFF:
+                # Difference from the UNMODIFIED base reconstruction, so a single
+                # dimension's small effect is visible (absolute maps hide it).
+                base_feat = _decode_tendril_feature(
+                    space_name, embeddings[st.session_state[base_index_key]]
+                )
+                st.markdown("**Change vs base:**")
+                if base_feat is not None:
+                    pct = 100.0 * _feature_change_fraction(feat, base_feat)
+                    st.image(
+                        _feature_diff_to_rgb(feat, base_feat),
+                        caption=f"Δx̂_ℓ — {pct:.1f}% L2 change",
+                        use_container_width=True,
+                    )
+                else:
+                    st.caption("Base feature unavailable.")
+            else:
+                st.markdown("**Level-ℓ map:**")
+                st.image(
+                    _feature_map_to_rgb(feat, view_mode),
+                    caption=f"x̂_ℓ ({_space_display_label(space_name)})",
+                    use_container_width=True,
+                )
         else:
-            st.markdown("**Decoded from sliders:**")
-            st.caption("Click 'Decode' to generate")
+            decoded_img = st.session_state.get(decoded_img_key)
+            st.markdown("**Decoded:**")
+            if decoded_img is not None:
+                st.image(
+                    _prepare_image(decoded_img),
+                    caption="Slider decode",
+                    use_container_width=True
+                )
+            else:
+                st.caption("Click 'Decode' to generate")
 
 
 def _render_slider_grid(
@@ -5337,23 +6525,33 @@ def _render_slider_grid(
     embeddings: np.ndarray,
     key_suffix: str = "",
 ):
-    """Render a grid of latent dimension sliders."""
-    # Compute variance per dimension for context
+    """Render a grid of latent dimension sliders, most-variable dimension first."""
+    # Compute variance per dimension and order so the most informative
+    # dimensions sit at the top-left (highest variance = most spread).
     var_per_dim = np.var(embeddings, axis=0)
+    dim_order = list(np.argsort(var_per_dim)[::-1])
 
     z_values_key = f"slider_z_values{key_suffix}"
 
-    # Layout: 2 sliders per row
+    st.caption(
+        "Sliders ordered by **variance (most variable first)** — σ² shown in "
+        "each label. Low-variance dimensions near the end barely vary in the "
+        "data and rarely change the image."
+    )
+
+    # Layout: 4 sliders per row to keep everything compact and visible at once.
+    per_row = 4
     updated = False
-    for row_start in range(0, latent_dim, 2):
-        cols = st.columns(2)
-        for col_offset in range(2):
-            d = row_start + col_offset
-            if d >= latent_dim:
+    for row_start in range(0, latent_dim, per_row):
+        cols = st.columns(per_row)
+        for col_offset in range(per_row):
+            pos = row_start + col_offset
+            if pos >= latent_dim:
                 break
+            d = int(dim_order[pos])
             with cols[col_offset]:
                 new_val = st.slider(
-                    f"z[{d}] (var={var_per_dim[d]:.3f})",
+                    f"z[{d}] σ²={var_per_dim[d]:.2f}",
                     min_value=-4.0,
                     max_value=4.0,
                     value=float(z_values[d]),
@@ -5390,7 +6588,10 @@ def _render_conditioning_sliders(
     st.markdown("**Conditioning (decoder background HSV):**")
     st.caption(
         "Override the background colour fed to the decoder. Latent z stays "
-        "fixed, so you isolate the effect of conditioning."
+        "fixed, so you isolate the effect of conditioning. **Each slider's 0–1 "
+        "range maps linearly onto the 0–255 H/S/V channel** (PIL HSV scale, "
+        "where Hue 0–255 spans the full 0–360° colour wheel) — so Hue 0.0 ≈ 0 "
+        "and Hue 1.0 ≈ 255 in the encoding."
     )
     values: List[float] = []
     cols = st.columns(len(cond_vars))
@@ -5772,6 +6973,30 @@ def _render_cluster_enrichment():
             st.info("Load data first to use enrichment analysis.")
             return
 
+        st.markdown(
+            "Groups images into **K clusters** (K-Means) in a chosen latent "
+            "space, then tests whether each morphology **label** is "
+            "over-represented in each cluster more than random chance would "
+            "predict (one-sided hypergeometric / Fisher's exact test). Use it to "
+            "ask *“does this unsupervised cluster correspond to a known "
+            "morphology?”*"
+        )
+
+        # --- Latent-space selector (answers "which space is this computed on?") ---
+        all_embeddings = st.session_state.get('all_embeddings', {})
+        tendril_keys = st.session_state.get('tendril_keys', [])
+        space_options = _analysis_spaces()
+        active = st.session_state.get('active_latent_space', 'primary')
+        space_name = st.selectbox(
+            "Latent space",
+            space_options,
+            index=space_options.index(active) if active in space_options else 0,
+            format_func=lambda x: _space_display_label(x),
+            key="enrichment_space",
+            help="The clustering runs on this latent space's embeddings. "
+                 "Defaults to the active space chosen at the top of the page.",
+        )
+
         # --- Label column selector ---
         categorical_cols = _order_label_columns_for_ui(_metadata_label_columns(metadata_df))
         if not categorical_cols:
@@ -5794,15 +7019,30 @@ def _render_cluster_enrichment():
             "Cluster source",
             ["K-Means (high-dim)", "K-Means (projected 2D)"],
             key="enrichment_cluster_source",
+            help="Where K-Means computes the clusters.",
+        )
+        st.caption(
+            "**Cluster source** — what K-Means clusters on:\n"
+            "- **K-Means (high-dim)** clusters in the *full* latent embedding "
+            "(all dimensions of the chosen space). Uses all the information, but "
+            "the clusters need not look tidy on the 2D plot.\n"
+            "- **K-Means (projected 2D)** clusters on *only* the two PCA/UMAP "
+            "coordinates drawn on the scatter. Clusters match what your eye sees "
+            "on the plot, but ignore everything the projection dropped."
         )
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
+            # Capital K = number of K-Means clusters. Kept distinct from the
+            # lowercase hypergeometric k (label-overlap count) used in the tables.
             n_clusters = st.slider(
-                "k (clusters)",
+                "K (number of K-Means clusters)",
                 min_value=2, max_value=20,
                 value=st.session_state.n_clusters,
                 key="enrichment_n_clusters",
+                help="K = how many clusters K-Means forms. Not the same as the "
+                     "lowercase k in the results tables (that k is the label "
+                     "overlap count from the hypergeometric test).",
             )
         with col_b:
             exclude_unlabelled = st.checkbox(
@@ -5821,13 +7061,14 @@ def _render_cluster_enrichment():
             # Compute clusters
             from sklearn.cluster import KMeans
 
+            space_emb = all_embeddings.get(space_name)
             if cluster_source == "K-Means (high-dim)":
-                data = st.session_state.embeddings
+                data = space_emb
             else:
-                data = st.session_state.coords_2d
+                data = _ensure_space_coords_2d(space_name, space_emb)
 
             if data is None:
-                st.error("No embedding data available.")
+                st.error("No embedding data available for this space.")
                 return
 
             cluster_labels = KMeans(
@@ -5856,6 +7097,14 @@ def _render_cluster_enrichment():
             )
             # Must not assign to enrichment_q_threshold — that key is owned by the widget above.
             st.session_state['enrichment_applied_q'] = q_threshold
+            # Record the run context so the results section can describe itself.
+            st.session_state['enrichment_context'] = {
+                'space': space_name,
+                'label_col': label_col,
+                'cluster_source': cluster_source,
+                'n_clusters': int(n_clusters),
+                'exclude_unlabelled': bool(exclude_unlabelled),
+            }
 
         # Display results if available
         enrichment_df = st.session_state.get('enrichment_results')
@@ -5865,14 +7114,70 @@ def _render_cluster_enrichment():
                 'enrichment_applied_q',
                 st.session_state.get('enrichment_q_threshold', 0.05),
             )
+            ctx = st.session_state.get('enrichment_context', {})
+
+            # --- Context: exactly what this run was computed on ---
+            if ctx:
+                src = ("high-dimensional embedding" if ctx.get('cluster_source')
+                       == "K-Means (high-dim)" else "2D projection")
+                excl = ("excluding unlabelled images"
+                        if ctx.get('exclude_unlabelled') else "including unlabelled images")
+                st.info(
+                    f"Computed on **{_space_display_label(ctx.get('space', 'primary'))}** "
+                    f"({src}), **K = {ctx.get('n_clusters')}** clusters, labels from "
+                    f"**`{ctx.get('label_col')}`**, {excl}. "
+                    f"Significant means **q < {q_thresh:g}**."
+                )
+
+            # --- Glossary: every symbol used in the tables ---
+            with st.expander("What the columns mean", expanded=False):
+                st.markdown(
+                    "- **cluster** — K-Means cluster id (0…K−1, where **K** is the "
+                    "number of clusters you chose).\n"
+                    "- **label** — a morphology class from the chosen label column.\n"
+                    "- **N** — total images in the analysis (after any unlabelled "
+                    "exclusion). Same on every row.\n"
+                    "- **K (table column)** — how many images carry this **label** "
+                    "in total (across all clusters). *(Distinct from the K-Means "
+                    "cluster count above — unfortunate name collision in the "
+                    "hypergeometric convention.)*\n"
+                    "- **n** — size of this **cluster** (number of images in it).\n"
+                    "- **k** — images of this **label** that fall inside this "
+                    "**cluster** (the overlap).\n"
+                    "- **expected** — images of this label you'd expect in the "
+                    "cluster by chance = n × K ∕ N.\n"
+                    "- **enrichment_ratio** — k ∕ expected. >1 = over-represented, "
+                    "<1 = under-represented.\n"
+                    "- **p_value** — hypergeometric P[overlap ≥ k] (one-sided; "
+                    "chance of seeing this much overlap or more).\n"
+                    "- **q_value** — p_value after Benjamini–Hochberg correction for "
+                    "testing many cluster×label pairs; compare this to the "
+                    "significance threshold.\n\n"
+                    "*Summary-only columns:* **top_label** = the cluster's most "
+                    "enriched label; **significant** = top label's q < threshold."
+                )
 
             st.markdown("#### Per-cluster summary")
+            st.caption(
+                "One row per cluster, showing that cluster's **single most "
+                "enriched label** (`top_label`) with its overlap `k` out of cluster "
+                "size `n`. Example: `top_label=shmoo, k=55, n=60` ⇒ 55 of the 60 "
+                "images in this cluster are shmoo. Clusters whose images are **all "
+                "unlabelled disappear when 'Exclude unlabelled' is on** (they have "
+                "no labelled members to test) — that is why cluster ids can be "
+                "missing from this table."
+            )
             if summary_df is not None and not summary_df.empty:
                 st.dataframe(summary_df, use_container_width=True)
             else:
                 st.info("No summary available.")
 
             st.markdown("#### Full results")
+            st.caption(
+                "Every **cluster × label** pair with a non-zero overlap (k ≥ 1) — "
+                "the full detail behind the summary, one row per pair (so each "
+                "cluster appears on several rows, one for each label present in it)."
+            )
             sig_only = st.checkbox(
                 "Show significant only", value=False,
                 key="enrichment_sig_only",
@@ -5914,6 +7219,554 @@ def _render_cluster_enrichment():
             )
 
 
+def _numeric_metadata_columns(metadata_df: pd.DataFrame) -> List[str]:
+    """Continuous numeric attribute columns suitable for regression probes."""
+    skip = {'id', 'transformed_image', 'rgb_image', 'hat_rgb_image',
+            'hat_hsv_image', 'hat_transformed_image', 'row', 'column'}
+    out = []
+    for c in metadata_df.columns:
+        if c in skip:
+            continue
+        s = metadata_df[c]
+        if not pd.api.types.is_numeric_dtype(s):
+            continue
+        if _is_categorical_column(s):  # whole-number grade codes etc. → not regression
+            continue
+        if int(s.nunique(dropna=True)) < 5:
+            continue
+        out.append(c)
+    return out
+
+
+def _render_latent_probes():
+    """Linear-probe each latent space for known attributes ("what's encoded where").
+
+    For each space (primary z + every TLR) and each chosen attribute, fit a
+    simple cross-validated linear model — Ridge (R²) for numeric attributes,
+    logistic regression (accuracy) for categorical ones — and tabulate the
+    result. This reads the *distributed* TLR codes at the population level:
+    individual dimensions are not interpretable, but a learned linear readout
+    reveals whether (and where) an attribute is encoded.
+    """
+    with st.expander("What does each latent space encode? (linear probes)", expanded=False):
+        st.markdown(
+            "TLR latents are **distributed** — no single dimension is a readable "
+            "knob (we measured the space to be near-isotropic and the decoder "
+            "insensitive to any one direction). The way to read them is to learn "
+            "a **linear readout** per attribute and see which space carries it."
+        )
+        st.caption(
+            "Numeric attributes → **R²** (0 = no better than the mean, 1 = "
+            "perfect; negative = worse than the mean). Categorical → **accuracy**, "
+            "compared to the majority-class **baseline** shown in the header. "
+            "A value clearly above baseline / above 0 means the attribute is "
+            "linearly encoded in that space."
+        )
+
+        metadata_df = st.session_state.get('metadata_df')
+        all_embeddings = st.session_state.get('all_embeddings') or {}
+        if metadata_df is None or not all_embeddings:
+            st.info("Load a model with embeddings + metadata first.")
+            return
+
+        n = len(metadata_df)
+        spaces = _analysis_spaces()  # primary + tendrils + corrected
+        if not spaces:
+            st.warning(
+                "Embeddings and metadata rows are not aligned (one row per image) "
+                "— cannot probe."
+            )
+            return
+
+        num_cols = _numeric_metadata_columns(metadata_df)
+        cat_cols = _order_label_columns_for_ui(_metadata_label_columns(metadata_df))
+        attr_options = num_cols + cat_cols
+        if not attr_options:
+            st.warning("No numeric or categorical attribute columns found to probe.")
+            return
+
+        # Sensible defaults: hue/size + morphology/media/day when present.
+        prefer = ['average_hue', 'colony_size', 'average_saturation', 'average_value',
+                  'manual_formation', 'media', 'day', 'plate_media']
+        default_attrs = [a for a in prefer if a in attr_options] or attr_options[:4]
+
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            chosen = st.multiselect(
+                "Attributes to probe", attr_options, default=default_attrs,
+                key="probe_attrs",
+            )
+        with c2:
+            max_n = st.number_input(
+                "Max samples", min_value=100, max_value=int(min(n, 20000)),
+                value=int(min(n, 2000)), step=100, key="probe_max_n",
+                help="Subsample for speed; probes run on this many rows.",
+            )
+
+        if not chosen:
+            st.info("Pick at least one attribute.")
+            return
+
+        if not st.button("Run probes", key="probe_run", type="primary"):
+            return
+
+        from sklearn.linear_model import Ridge, LogisticRegression
+        from sklearn.model_selection import cross_val_score
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.pipeline import make_pipeline
+
+        rng = np.random.default_rng(0)
+        sample = (rng.choice(n, int(max_n), replace=False) if n > max_n
+                  else np.arange(n))
+
+        rows = []
+        baselines = {}
+        prog = st.progress(0.0, text="Probing…")
+        total = len(spaces) * len(chosen)
+        done = 0
+        for space in spaces:
+            emb_full = all_embeddings[space]
+            row = {"space": _space_display_label(space)}
+            for attr in chosen:
+                y_full = metadata_df[attr]
+                is_cat = attr in cat_cols
+                # Valid rows for this attribute within the sample.
+                y_s = y_full.iloc[sample]
+                if is_cat:
+                    yv = y_s.astype(str)
+                    keep = ~yv.isin(['nan', 'unlabelled', 'None', ''])
+                else:
+                    yv = pd.to_numeric(y_s, errors='coerce')
+                    keep = yv.notna()
+                idx = sample[keep.to_numpy()]
+                score = np.nan
+                if len(idx) >= 40:
+                    X = emb_full[idx]
+                    y = (y_full.iloc[idx].astype(str).to_numpy() if is_cat
+                         else pd.to_numeric(y_full.iloc[idx], errors='coerce').to_numpy())
+                    try:
+                        if is_cat:
+                            _, counts = np.unique(y, return_counts=True)
+                            baselines[attr] = counts.max() / len(y)
+                            if len(counts) >= 2:
+                                model = make_pipeline(
+                                    StandardScaler(),
+                                    LogisticRegression(max_iter=400, C=1.0),
+                                )
+                                score = float(cross_val_score(
+                                    model, X, y, cv=4, scoring='accuracy'
+                                ).mean())
+                        else:
+                            baselines.setdefault(attr, 0.0)
+                            model = make_pipeline(StandardScaler(), Ridge(alpha=10.0))
+                            score = float(cross_val_score(
+                                model, X, y, cv=4, scoring='r2'
+                            ).mean())
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.warning("Probe failed for %s/%s: %s", space, attr, exc)
+                row[attr] = score
+                done += 1
+                prog.progress(done / total, text=f"Probing {space} · {attr}")
+            rows.append(row)
+        prog.empty()
+
+        result = pd.DataFrame(rows).set_index("space")
+        # Header annotations: metric + baseline.
+        col_labels = {}
+        for attr in chosen:
+            if attr in cat_cols:
+                col_labels[attr] = f"{attr}\n(acc; base {baselines.get(attr, 0):.2f})"
+            else:
+                col_labels[attr] = f"{attr}\n(R²)"
+        result = result.rename(columns=col_labels)
+
+        def _highlight(val, attr):
+            if pd.isna(val):
+                return ''
+            base = baselines.get(attr, 0.0)
+            good = (val > base + 0.02)
+            return 'background-color:#c6efce' if good else 'background-color:#ffd9d9'
+
+        styler = result.style.format("{:.2f}", na_rep="—")
+        for attr in chosen:
+            lbl = col_labels[attr]
+            styler = styler.apply(
+                lambda s, a=attr: [_highlight(v, a) for v in s], subset=[lbl]
+            )
+        st.dataframe(styler, use_container_width=True)
+        st.caption(
+            "Green = encoded above baseline; red = at/below baseline. Compare "
+            "rows to see which **TLR level** carries each attribute (e.g. fine "
+            "appearance in early layers vs coarse shape in deep layers). "
+            "Note: attributes the model is *conditioned on* (e.g. hue) may be "
+            "deliberately **not** stored in the latent."
+        )
+
+
+def _probe_score(X: np.ndarray, y: np.ndarray, is_categorical: bool) -> Tuple[float, float]:
+    """Cross-validated linear-probe score + baseline. Ridge R² / logistic accuracy."""
+    from sklearn.linear_model import Ridge, LogisticRegression
+    from sklearn.model_selection import cross_val_score
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import make_pipeline
+    if is_categorical:
+        _, counts = np.unique(y, return_counts=True)
+        base = counts.max() / len(y)
+        if len(counts) < 2:
+            return float('nan'), base
+        m = make_pipeline(StandardScaler(), LogisticRegression(max_iter=400))
+        return float(cross_val_score(m, X, y, cv=4, scoring='accuracy').mean()), base
+    m = make_pipeline(StandardScaler(), Ridge(alpha=10.0))
+    return float(cross_val_score(m, X, y, cv=4, scoring='r2').mean()), 0.0
+
+
+def _build_nuisance_design(
+    metadata_df: pd.DataFrame,
+    num_cols: List[str],
+    cat_cols: List[str],
+) -> np.ndarray:
+    """Design matrix N for nuisance regression: intercept + standardized numeric
+    covariates + one-hot (drop-first) categorical covariates. NaNs imputed."""
+    n = len(metadata_df)
+    parts = [np.ones((n, 1))]
+    for c in num_cols:
+        v = pd.to_numeric(metadata_df[c], errors='coerce').to_numpy(dtype=float)
+        mean = np.nanmean(v) if np.isfinite(v).any() else 0.0
+        v = np.where(np.isfinite(v), v, mean)
+        sd = v.std() or 1.0
+        parts.append(((v - v.mean()) / sd).reshape(-1, 1))
+    for c in cat_cols:
+        s = metadata_df[c].astype(str).fillna('NA')
+        d = pd.get_dummies(s, drop_first=True)
+        if d.shape[1] > 0:
+            parts.append(d.to_numpy(dtype=float))
+    return np.hstack(parts)
+
+
+def _residualize(E: np.ndarray, N: np.ndarray) -> np.ndarray:
+    """Return residuals of ``E`` (n×d) regressed on design ``N`` (n×p).
+
+    Removes the linear subspace spanned by the nuisance covariates so that no
+    linear predictor can recover them — the ``removeBatchEffect`` operation,
+    generalized to continuous + categorical covariates.
+    """
+    beta, *_ = np.linalg.lstsq(N, E, rcond=None)  # (p, d)
+    return E - N @ beta
+
+
+def _assemble_source_embedding(space_keys: List[str]) -> Optional[np.ndarray]:
+    """Per-block z-score each space's embedding, then hstack into one matrix.
+
+    Standardizing each block (per-column mean/std) before concatenation stops a
+    high-variance layer from dominating the concat and the subsequent
+    residualization. Returns ``None`` if any block is missing or misaligned.
+    """
+    md = st.session_state.get('metadata_df')
+    if md is None:
+        return None
+    n = len(md)
+    all_emb = st.session_state.get('all_embeddings') or {}
+    blocks = []
+    for k in space_keys:
+        E = all_emb.get(k)
+        if E is None or len(E) != n:
+            return None
+        E = np.asarray(E, dtype=float)
+        mu = E.mean(axis=0)
+        sd = E.std(axis=0)
+        sd[sd == 0] = 1.0
+        blocks.append((E - mu) / sd)
+    return np.hstack(blocks) if blocks else None
+
+
+def _build_corrected_space(
+    src_keys: List[str],
+    num: List[str],
+    cat: List[str],
+    key: str,
+    label: str,
+) -> bool:
+    """Residualize the (standardized, concatenated) source spaces against the
+    chosen nuisances and register the result under ``key`` for vector analyses.
+
+    Stores the embedding in ``all_embeddings[key]``, a 2D projection in
+    ``all_coords_2d[key]``, and metadata in the ``corrected_registry``.
+    Returns True on success.
+    """
+    md = st.session_state.get('metadata_df')
+    E = _assemble_source_embedding(src_keys)
+    if md is None or E is None:
+        st.warning("Selected source space(s) unavailable or misaligned.")
+        return False
+    N = _build_nuisance_design(md, num, cat)
+    E_corr = _residualize(E, N)
+    st.session_state.all_embeddings[key] = E_corr
+    st.session_state.all_coords_2d[key] = _project_embeddings(
+        E_corr, st.session_state.get('reduction_method', 'pca')
+    )
+    reg = st.session_state.setdefault('corrected_registry', {})
+    reg[key] = {
+        'label': label,
+        'src_keys': list(src_keys),
+        'num': list(num),
+        'cat': list(cat),
+        'design_cols': int(N.shape[1]),
+        'dim': int(E_corr.shape[1]),
+    }
+    st.session_state['nc_last_built'] = key
+    return True
+
+
+def _migrate_legacy_corrected() -> None:
+    """Fold any pre-existing single ``'corrected'`` space into the registry."""
+    all_emb = st.session_state.get('all_embeddings') or {}
+    reg = st.session_state.setdefault('corrected_registry', {})
+    if all_emb.get('corrected') is not None and 'corr:legacy' not in reg:
+        old = st.session_state.get('nc_result') or {}
+        reg['corr:legacy'] = {
+            'label': 'Nuisance-corrected (legacy)',
+            'src_keys': [old.get('src')] if old.get('src') else [],
+            'num': list(old.get('num', [])),
+            'cat': list(old.get('cat', [])),
+            'design_cols': int(old.get('design_cols', 0)),
+            'dim': int(len(all_emb['corrected'][0]) if len(all_emb['corrected']) else 0),
+        }
+        st.session_state.all_embeddings['corr:legacy'] = all_emb['corrected']
+        coords = st.session_state.get('all_coords_2d', {}).get('corrected')
+        if coords is not None:
+            st.session_state.all_coords_2d['corr:legacy'] = coords
+        st.session_state.all_embeddings.pop('corrected', None)
+        st.session_state.get('all_coords_2d', {}).pop('corrected', None)
+
+
+def _render_nuisance_correction():
+    """Build phenotype embeddings with technical nuisances regressed out.
+
+    Supports several corrected spaces at once (e.g. adjusted TLR ℓ=1 and
+    adjusted ℓ=1⊕ℓ=2); each is registered for use in all vector-only analyses.
+    """
+    import plotly.express as px
+
+    with st.expander("Nuisance-corrected embeddings (remove technical variation)",
+                     expanded=True):
+        st.markdown(
+            "Produce embeddings that **keep colony phenotype** but **remove "
+            "chosen technical variables** by linear residualization (the "
+            "`removeBatchEffect` / ComBat idea, generalized to continuous + "
+            "categorical covariates). Each built space becomes a selectable "
+            "**Adjusted …** space in every downstream *vector* analysis "
+            "(probes, clustering, silhouette/Mantel, neighbours, sprite map, …). "
+            "It is **not** offered to the generative tools (sweep, sliders, "
+            "interpolation), which need a decoder a residualized space lacks."
+        )
+        st.caption(
+            "⚠️ Strip only **technical** variables (background hue/sat/value, "
+            "plate). **Media** and **size** are partly biological — removing a "
+            "cause of phenotype removes that phenotype too; keep them unless you "
+            "are sure they are artifacts."
+        )
+
+        metadata_df = st.session_state.get('metadata_df')
+        all_embeddings = st.session_state.get('all_embeddings') or {}
+        if metadata_df is None or not all_embeddings:
+            st.info("Load a model with embeddings + metadata first.")
+            return
+        n = len(metadata_df)
+
+        _migrate_legacy_corrected()
+
+        tendril_keys = _dedupe_tendril_keys_preserve_order(
+            list(st.session_state.get('tendril_keys', []) or [])
+        )
+        # Sources are primary + tendrils (never residualize an already-corrected space).
+        src_spaces = [s for s in (['primary'] + tendril_keys)
+                      if all_embeddings.get(s) is not None
+                      and len(all_embeddings[s]) == n]
+        if not src_spaces:
+            st.warning("Embeddings and metadata are not aligned (one row per image).")
+            return
+
+        num_cols = _numeric_metadata_columns(metadata_df)
+        cat_cols = _order_label_columns_for_ui(_metadata_label_columns(metadata_df))
+        default_num = [c for c in ('average_hue', 'average_saturation',
+                                   'average_value') if c in num_cols]
+        default_cat = [c for c in ('plate',) if c in cat_cols]
+
+        # Resolve TLR ℓ=1 / ℓ=2 keys by position (ℓ=i == tendril_keys[i]).
+        l1_key = tendril_keys[1] if len(tendril_keys) > 1 else None
+        l2_key = tendril_keys[2] if len(tendril_keys) > 2 else None
+
+        # --- One-click presets (default nuisances: HSV + plate) ---
+        st.markdown("**Quick presets** (remove "
+                    f"{', '.join(default_num + default_cat) or 'nothing'})")
+        p1, p2 = st.columns(2)
+        with p1:
+            if st.button("Build adjusted ℓ=1", key="nc_preset_l1",
+                         disabled=l1_key is None or l1_key not in src_spaces,
+                         use_container_width=True):
+                if _build_corrected_space([l1_key], default_num, default_cat,
+                                          'corr:l1', 'Adjusted TLR ℓ=1'):
+                    st.rerun()
+        with p2:
+            if st.button("Build adjusted ℓ=1⊕ℓ=2", key="nc_preset_l1l2",
+                         disabled=(l1_key is None or l2_key is None
+                                   or l1_key not in src_spaces or l2_key not in src_spaces),
+                         use_container_width=True):
+                if _build_corrected_space([l1_key, l2_key], default_num, default_cat,
+                                          'corr:l1+l2', 'Adjusted TLR ℓ=1⊕ℓ=2'):
+                    st.rerun()
+
+        # --- Manual builder (arbitrary source + nuisances) ---
+        with st.expander("Custom corrected space", expanded=False):
+            default_src = [l1_key] if l1_key in src_spaces else src_spaces[:1]
+            man_src = st.multiselect(
+                "Source space(s) — multiple are z-scored then concatenated",
+                src_spaces, default=default_src, format_func=_space_display_label,
+                key="nc_src_multi",
+            )
+            mc1, mc2 = st.columns(2)
+            with mc1:
+                man_num = st.multiselect(
+                    "Numeric nuisances to remove", num_cols, default=default_num,
+                    key="nc_num",
+                )
+            with mc2:
+                man_cat = st.multiselect(
+                    "Categorical nuisances to remove", cat_cols, default=default_cat,
+                    key="nc_cat",
+                    help="Plate is the classic technical batch. Avoid 'media' "
+                         "unless you consider it purely technical.",
+                )
+            disabled = not man_src or (not man_num and not man_cat)
+            if st.button("Build corrected space", type="primary", key="nc_run",
+                         disabled=disabled):
+                slug = '+'.join(
+                    str(tendril_keys.index(s)) if s in tendril_keys else s
+                    for s in man_src
+                )
+                key = f"corr:{slug}"
+                label = "Adjusted " + " ⊕ ".join(_space_display_label(s) for s in man_src)
+                if _build_corrected_space(man_src, man_num, man_cat, key, label):
+                    st.rerun()
+
+        # --- Registry of built spaces (with remove) ---
+        reg = st.session_state.get('corrected_registry') or {}
+        if not reg:
+            st.info("No corrected spaces built yet — use a preset above to start.")
+            return
+        st.markdown("**Built corrected spaces**")
+        for key, entry in list(reg.items()):
+            rc1, rc2 = st.columns([5, 1])
+            with rc1:
+                strip = ', '.join(entry.get('num', []) + entry.get('cat', [])) or '—'
+                srcs = ' ⊕ '.join(_space_display_label(s) for s in entry.get('src_keys', []))
+                st.markdown(
+                    f"- **{entry['label']}**  ·  from {srcs or '?'}  ·  "
+                    f"removed: {strip}  ·  {entry.get('dim', '?')}-d"
+                )
+            with rc2:
+                if st.button("Remove", key=f"nc_rm_{key}"):
+                    st.session_state.get('corrected_registry', {}).pop(key, None)
+                    st.session_state.get('all_embeddings', {}).pop(key, None)
+                    st.session_state.get('all_coords_2d', {}).pop(key, None)
+                    st.rerun()
+
+        # --- Inspect one corrected space: verification + layout + download ---
+        st.divider()
+        reg_keys = list(reg.keys())
+        last = st.session_state.get('nc_last_built')
+        sel = st.selectbox(
+            "Inspect corrected space", reg_keys,
+            index=reg_keys.index(last) if last in reg_keys else len(reg_keys) - 1,
+            format_func=_space_display_label, key="nc_inspect",
+        )
+        entry = reg[sel]
+        E_corr = st.session_state.all_embeddings.get(sel)
+        E_src = _assemble_source_embedding(entry['src_keys'])
+        if E_corr is None or E_src is None:
+            st.warning("This corrected space is unavailable — rebuild it.")
+            return
+
+        # Verification: probe removed nuisances + kept phenotype, before vs after.
+        st.markdown("#### Verification — did it work?")
+        st.caption(
+            "Removed nuisances should drop to ~baseline/0 **after**; a kept "
+            "phenotype label (e.g. manual_formation) should be retained. "
+            "Categorical = accuracy (vs baseline); numeric = R²."
+        )
+        check_attrs = list(entry['num']) + list(entry['cat'])
+        for extra in ('manual_formation', 'media', 'colony_size'):
+            if extra not in check_attrs and (extra in num_cols or extra in cat_cols):
+                check_attrs.append(extra)
+
+        if st.button("Run before/after probes", key="nc_probe_run"):
+            rng = np.random.default_rng(0)
+            sample = (rng.choice(n, 2000, replace=False) if n > 2000 else np.arange(n))
+            rows = []
+            prog = st.progress(0.0, text="Probing before/after…")
+            for ai, attr in enumerate(check_attrs):
+                is_cat = attr in cat_cols
+                y_s = metadata_df[attr].iloc[sample]
+                if is_cat:
+                    keep = ~y_s.astype(str).isin(['nan', 'unlabelled', 'None', ''])
+                else:
+                    keep = pd.to_numeric(y_s, errors='coerce').notna()
+                idx = sample[keep.to_numpy()]
+                if len(idx) < 40:
+                    continue
+                y = (metadata_df[attr].iloc[idx].astype(str).to_numpy() if is_cat
+                     else pd.to_numeric(metadata_df[attr].iloc[idx], errors='coerce').to_numpy())
+                before, base = _probe_score(E_src[idx], y, is_cat)
+                after, _ = _probe_score(E_corr[idx], y, is_cat)
+                rows.append({
+                    'attribute': attr,
+                    'role': 'removed' if attr in (entry['num'] + entry['cat']) else 'kept',
+                    'metric': 'acc' if is_cat else 'R²',
+                    'baseline': round(base, 2) if is_cat else 0.0,
+                    'before': round(before, 3),
+                    'after': round(after, 3),
+                })
+                prog.progress((ai + 1) / len(check_attrs), text=f"Probing {attr}")
+            prog.empty()
+            st.session_state[f'nc_probe_{sel}'] = rows
+        probe_rows = st.session_state.get(f'nc_probe_{sel}')
+        if probe_rows:
+            st.dataframe(pd.DataFrame(probe_rows).set_index('attribute'),
+                         use_container_width=True)
+
+        # Layout of the corrected embedding.
+        st.markdown("#### Corrected layout")
+        color_opts = [c for c in (['manual_formation', 'media'] + num_cols)
+                      if c in metadata_df.columns]
+        color_by = st.selectbox(
+            "Colour points by", color_opts or ['(none)'], key="nc_color",
+        )
+        coords = st.session_state.all_coords_2d.get(sel)
+        if coords is not None and color_by in metadata_df.columns:
+            dfp = pd.DataFrame({'x': coords[:, 0], 'y': coords[:, 1]})
+            is_cat_color = color_by in cat_cols
+            dfp[color_by] = (metadata_df[color_by].astype(str).values if is_cat_color
+                             else pd.to_numeric(metadata_df[color_by], errors='coerce').values)
+            fig = px.scatter(
+                dfp, x='x', y='y', color=color_by,
+                title=f"{entry['label']} (removed {', '.join(entry['num'] + entry['cat']) or '—'})",
+                color_continuous_scale=None if is_cat_color else 'Viridis',
+            )
+            fig.update_traces(marker=dict(size=4, opacity=0.6))
+            fig.update_layout(height=520, margin=dict(l=10, r=10, t=40, b=10))
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Download.
+        import io
+        buf = io.BytesIO()
+        np.save(buf, E_corr)
+        st.download_button(
+            "Download corrected embedding (.npy)", data=buf.getvalue(),
+            file_name=f"{sel.replace(':', '_')}_embedding.npy",
+            mime="application/octet-stream", key="nc_download",
+        )
+
+
 def _render_silhouette_mantel():
     """Render silhouette and Mantel test analysis section."""
     import plotly.graph_objects as go
@@ -5937,11 +7790,11 @@ def _render_silhouette_mantel():
 
         # --- Latent space selector ---
         tendril_keys = st.session_state.get('tendril_keys', [])
-        space_options = ['primary'] + list(tendril_keys)
+        space_options = _analysis_spaces()
         space_name = st.selectbox(
             "Latent space",
             space_options,
-            format_func=lambda x: "Primary (mu)" if x == "primary" else f"Tendril: {x}",
+            format_func=lambda x: "Primary (mu)" if x == "primary" else _space_display_label(x),
             key="sil_mantel_space",
         )
         X = all_embeddings.get(space_name)
@@ -6194,21 +8047,44 @@ def _render_silhouette_mantel():
         st.markdown("### Replicate consistency (latent distances)")
         st.caption(
             "Distance between replicate-pair embeddings vs distance between "
-            "random non-replicate pairs. AUROC near 1.0 and large positive "
-            "Cohen's d mean replicates land close together in this latent space."
+            "random non-replicate pairs **in this latent space**. AUROC near 1.0 "
+            "and large positive Cohen's d mean replicates land close together "
+            "(the encoder treats the two shots of the same colony as alike)."
         )
 
         if 'my_rep' not in metadata_df.columns:
             st.info("Metadata has no `my_rep` column — replicate consistency unavailable.")
         else:
-            rep_col_a, rep_col_b = st.columns(2)
+            # How many complete replicate pairs exist among the LOADED images.
+            grp_sizes = metadata_df.groupby('my_rep').size()
+            n_available_pairs = int((grp_sizes == 2).sum())
+            st.caption(
+                f"**{n_available_pairs}** complete replicate pairs are available "
+                f"— i.e. `my_rep` groups with exactly 2 images among the "
+                f"**{len(metadata_df)}** currently loaded images. This count is "
+                "limited by *Max images to load* (set when you loaded the data): "
+                "load more images to surface more pairs. Groups with only 1 "
+                "loaded member, or 3+ members, are not counted as a pair here."
+            )
+
+            rep_col_a, rep_col_b, rep_col_c = st.columns(3)
             with rep_col_a:
                 rep_n_rand = st.number_input(
                     "Random pairs to sample",
                     min_value=10, max_value=20000, value=500, step=50,
                     key="rep_n_rand",
+                    help="Number of random non-replicate pairs to use as the "
+                         "comparison baseline.",
                 )
             with rep_col_b:
+                rep_max_pairs = st.number_input(
+                    "Max replicate pairs (0 = all)",
+                    min_value=0, max_value=20000, value=0, step=10,
+                    key="rep_max_pairs",
+                    help="Optionally subsample the available replicate pairs "
+                         "(e.g. for speed). 0 uses every available pair.",
+                )
+            with rep_col_c:
                 rep_seed = st.number_input(
                     "Random seed", min_value=0, max_value=10_000,
                     value=42, step=1, key="rep_seed",
@@ -6233,6 +8109,11 @@ def _render_silhouette_mantel():
                 id_to_row = {v: i for i, v in enumerate(df_for_pairs['id'].values)}
 
                 rep_pairs = build_replicate_pairs(df_for_pairs, rep_col='my_rep')
+                # Optional subsample to a user-set cap.
+                if rep_max_pairs and len(rep_pairs) > int(rep_max_pairs):
+                    _rng = np.random.default_rng(int(rep_seed))
+                    _idx = _rng.choice(len(rep_pairs), size=int(rep_max_pairs), replace=False)
+                    rep_pairs = [rep_pairs[i] for i in sorted(_idx)]
                 if len(rep_pairs) < 2:
                     st.warning(
                         f"Found only {len(rep_pairs)} replicate pairs in `my_rep`; "
@@ -6437,11 +8318,11 @@ def _render_local_label_metrics():
 
         # --- Latent space selector ---
         tendril_keys = st.session_state.get('tendril_keys', [])
-        space_options = ['primary'] + list(tendril_keys)
+        space_options = _analysis_spaces()
         space_name = st.selectbox(
             "Latent space",
             space_options,
-            format_func=lambda x: "Primary (mu)" if x == "primary" else f"Tendril: {x}",
+            format_func=lambda x: "Primary (mu)" if x == "primary" else _space_display_label(x),
             key="knn_dist_space",
         )
         X = all_embeddings.get(space_name)
@@ -6537,6 +8418,20 @@ def _render_local_label_metrics():
         # ============================================================
         st.markdown("---")
         st.markdown("### Within / between-class distance effect")
+        st.markdown(
+            "Asks whether images **of the same label** sit closer together in "
+            "this latent space than images of **different labels**. It samples "
+            "pairs of points and splits them into *within-class* (both points "
+            "share a label) and *between-class* (different labels), then compares "
+            "their distances."
+        )
+        st.caption(
+            "**Mean within** / **Mean between** — average latent distance for "
+            "each group. **Ratio (B/W)** = mean-between ÷ mean-within; >1 means "
+            "classes are separated (different labels are farther apart than same "
+            "labels). **Cohen's d** — the size of that gap in standard-deviation "
+            "units (≈0.2 small, 0.5 medium, 0.8+ large)."
+        )
 
         wb_col_a, wb_col_b = st.columns(2)
         with wb_col_a:
@@ -6594,14 +8489,32 @@ def _render_rank_change_across_spaces():
             )
             return
 
+        st.markdown(
+            "Tracks how the **ranking of pairwise distances** changes as you move "
+            "through the latent spaces (primary z → TLR ℓ=0 → ℓ=1 → …). It samples "
+            "many image pairs, ranks them by distance (rank 1 = closest pair) "
+            "**within each space**, then asks how much each pair's rank moves "
+            "from space to space."
+        )
+        st.caption(
+            "**Δrank** (delta-rank) = the change in a pair's distance-rank between "
+            "two spaces. It is the one underlying quantity here, reported two "
+            "ways: per-pair **rank variance / range** across all spaces "
+            "(the overall metrics), and **mean |Δrank|** for each consecutive "
+            "transition (the table below). Small values = the spaces agree on "
+            "which pairs are close; large = the tendrils reorganise the geometry."
+        )
+
         # --- Space selection and ordering ---
         tendril_keys = st.session_state.get('tendril_keys', [])
-        available_spaces = ['primary'] + sorted(tendril_keys)
+        available_spaces = _analysis_spaces()  # primary + tendrils + corrected
 
         selected_spaces = st.multiselect(
             "Spaces (order matters)",
             available_spaces,
-            default=available_spaces,
+            # Corrected spaces are opt-in here (keeps the O(k²) matrix small).
+            default=[s for s in available_spaces if not s.startswith('corr:')],
+            format_func=_space_display_label,
             key="rc_spaces",
         )
 
@@ -6893,36 +8806,70 @@ def _render_tendril_replicate_diagnostics():
         gs_bg_target = training_config.get("grayscale_bg_target", 0.5)
         gs_bg_border = int(training_config.get("grayscale_bg_border", 12))
 
+        # Display labels for the four encoder skip-feature layers.
+        layer_labels = {f"x{i}": f"x{i} → TLR ℓ={i}" for i in range(4)}
+
+        st.markdown(
+            "Checks whether the VAE **encoder** maps the two images of a "
+            "replicate pair to similar internal features. For each pair it "
+            "extracts the encoder's four skip-connection feature maps "
+            "(**x0–x3**, shallow→deep) and measures the L2 distance between the "
+            "pair at each layer, comparing replicate pairs against random "
+            "non-replicate pairs."
+        )
+        st.caption(
+            "**x0–x3 are the encoder's skip-feature layers** (the inputs the "
+            "four tendril VAEs encode, so x_i ↔ **TLR ℓ=i**). They are *not* the "
+            "primary latent **z**: z is the encoder's deep bottleneck and is not "
+            "part of this per-skip-layer distance check — see *Replicate "
+            "consistency* above for the z-space version."
+        )
+        st.caption(
+            "How replicate pairs are identified: two images are replicates when "
+            "their filenames share the same plate/media/day/row/column key (the "
+            "trailing replicate index stripped) — the **same `my_rep` key already "
+            "in the metadata**. This panel re-derives it from filenames on disk "
+            "only so it can include replicate pairs beyond the images currently "
+            "loaded in memory and reload the raw pixels the encoder needs."
+        )
+
         # ── Controls ────────────────────────────────────────────
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             pool_hw = st.slider(
-                "Pool HW", min_value=2, max_value=16, value=8,
+                "Pool size (H×W)", min_value=2, max_value=16, value=8,
                 key="trd_pool_hw",
-                help="Adaptive average pool target size for skip features.",
+                help="HW = Height × Width, the spatial size of a feature map. "
+                     "Each encoder skip feature is a tensor of shape "
+                     "Channels×Height×Width; before measuring distance it is "
+                     "average-pooled down to a square grid of this many cells per "
+                     "side (e.g. 8 → an 8×8 grid). Larger keeps more spatial "
+                     "detail (slower, more dimensions); smaller is coarser/faster.",
             )
         with c2:
             n_nonrep = st.slider(
-                "Random pairs", min_value=10, max_value=500, value=200,
+                "Pairs to use", min_value=10, max_value=500, value=200,
                 key="trd_n_nonrep",
+                help="Caps how many pairs are analysed: this many random "
+                     "non-replicate pairs, and at most this many replicate "
+                     "pairs (whichever is fewer than the number found on disk).",
             )
         with c3:
             n_outliers = st.slider(
                 "Pairs per extreme", min_value=2, max_value=10, value=5,
                 key="trd_n_outliers",
+                help="In the outlier galleries below, how many pairs to show at "
+                     "each end — the N most-similar and the N most-different "
+                     "pairs per layer.",
             )
         with c4:
             show_layers = st.multiselect(
                 "Layers",
                 ["x0", "x1", "x2", "x3"],
                 default=["x0", "x1", "x2", "x3"],
+                format_func=lambda x: layer_labels.get(x, x),
                 key="trd_outlier_layers",
             )
-
-        st.caption(
-            "Scans filenames to find replicate pairs, then samples down "
-            "to match the requested pair count before loading images."
-        )
 
         # ── Compute ────────────────────────────────────────────
         if st.button("Compute intermediate distances", key="trd_compute_dist"):
@@ -6992,8 +8939,14 @@ def _render_tendril_replicate_diagnostics():
 
         # ── Distance distributions ─────────────────────────────
         st.markdown("#### Distance distributions (replicate vs random)")
+        st.caption(
+            "One histogram per encoder layer. Blue = replicate-pair distances, "
+            "salmon = random non-replicate-pair distances. If the encoder is "
+            "consistent, the blue (replicate) distances sit to the **left** "
+            "(smaller) of the salmon ones."
+        )
         hist_figs = plot_replicate_distance_distribution_per_layer(
-            rep_dist, nonrep_dist,
+            rep_dist, nonrep_dist, layer_labels=layer_labels,
         )
         for lname, fig in hist_figs.items():
             st.pyplot(fig)
@@ -7004,11 +8957,18 @@ def _render_tendril_replicate_diagnostics():
 
         # ── Replicate outlier pairs ────────────────────────────
         st.markdown("#### Replicate outlier pairs")
+        st.caption(
+            "The extreme **replicate** pairs at each layer: the most-similar "
+            "(smallest distance) and most-different (largest distance) pairs. "
+            "Each boxed A–B couple is one replicate pair; the largest-distance "
+            "pairs are where the encoder fails to recognise replicates as alike."
+        )
         rep_outlier_figs = plot_intermediate_layer_outliers(
             rep_dist, pair_df,
             layers=tuple(show_layers),
             n_outliers=n_outliers,
             label="Replicate",
+            layer_labels=layer_labels,
         )
         for lname, (left_fig, right_fig) in rep_outlier_figs.items():
             st.pyplot(left_fig)
@@ -7018,11 +8978,17 @@ def _render_tendril_replicate_diagnostics():
 
         # ── Random outlier pairs ───────────────────────────────
         st.markdown("#### Random outlier pairs")
+        st.caption(
+            "The same extremes but for **random non-replicate** pairs (two "
+            "unrelated images) — the baseline. Compare against the replicate "
+            "outliers above: random pairs should generally be farther apart."
+        )
         rand_outlier_figs = plot_intermediate_layer_outliers(
             nonrep_dist, pair_df,
             layers=tuple(show_layers),
             n_outliers=n_outliers,
             label="Random",
+            layer_labels=layer_labels,
         )
         for lname, (left_fig, right_fig) in rand_outlier_figs.items():
             st.pyplot(left_fig)
@@ -7146,8 +9112,9 @@ def _render_sprite_map():
 
     tendril_keys = st.session_state.get('tendril_keys', [])
     if tendril_keys:
-        space_names = ['primary'] + list(tendril_keys)
-        tab_labels = ["Primary (z)"] + [f"Tendril: {k}" for k in tendril_keys]
+        # primary + tendrils + corrected (corrected spaces get extra layout tabs).
+        space_names = _analysis_spaces()
+        tab_labels = [_space_display_label(s) for s in space_names]
         tabs = st.tabs(tab_labels)
         for tab, space_name in zip(tabs, space_names):
             with tab:
@@ -7185,6 +9152,59 @@ def _render_sprite_map_for_space(
         and len(metadata_df) == n_samples
         and n_samples == n_emb
     )
+
+    # --- Region selection (from box/lasso on the latent plots above) ---
+    region_idx: Optional[List[int]] = None
+    use_region = False
+    region_space = st.session_state.get('sprite_region_space')
+    if region_space == space_name:
+        ri = st.session_state.get('sprite_region_indices') or []
+        region_idx = [int(i) for i in ri if 0 <= int(i) < n_samples]
+
+    def _clear_region():
+        """Drop the stored region. The drawn box stays on the plot but no longer
+        re-asserts itself (per-chart guard in _tlv_capture_click), so this
+        genuinely starts over — draw a new box on any plot to pick a region."""
+        st.session_state.pop('sprite_region_indices', None)
+        st.session_state.pop('sprite_region_space', None)
+
+    if region_idx:
+        rcol1, rcol2 = st.columns([3, 1])
+        with rcol1:
+            use_region = st.checkbox(
+                f"Restrict to selected region ({len(region_idx)} points)",
+                value=True,
+                key=f"sprite_use_region{key_suffix}",
+                help="Build the mosaic from only the points you box/lasso-selected "
+                     "on the latent plots above.",
+            )
+        with rcol2:
+            if st.button("Clear region", key=f"sprite_clear_region{key_suffix}"):
+                _clear_region()
+                st.rerun()
+        st.caption(
+            "To pick a **different** region, just draw a new box on any latent "
+            "plot above (it replaces this one). Double-click a plot to clear its "
+            "drawn box."
+        )
+    elif region_space is not None:
+        # A region exists, but on another space's plot.
+        rcol1, rcol2 = st.columns([3, 1])
+        with rcol1:
+            st.caption(
+                f"A region is currently selected on **{_space_display_label(region_space)}**. "
+                "Draw a box on *this* plot to use this space instead, or clear it →"
+            )
+        with rcol2:
+            if st.button("Clear region", key=f"sprite_clear_region_other{key_suffix}"):
+                _clear_region()
+                st.rerun()
+    else:
+        st.caption(
+            "Tip: use the **Box Select / Lasso** tool on a latent plot above to "
+            "select a region, then build a sprite map of just those images. "
+            "Drawing a box on a different plot switches the region to that space."
+        )
 
     # Controls
     col1, col2, col3, col4 = st.columns(4)
@@ -7392,13 +9412,28 @@ def _render_sprite_map_for_space(
             rng = np.random.default_rng(42)
             try:
                 if mode_internal == "uniform":
+                    # When restricted to a selected region, place exactly those
+                    # points (subsample only if the region exceeds the cap).
+                    if use_region and region_idx:
+                        uni_idx = list(region_idx)
+                        if len(uni_idx) > max_samples_val:
+                            uni_idx = [
+                                int(i) for i in rng.choice(
+                                    uni_idx, size=max_samples_val, replace=False
+                                )
+                            ]
+                        uni_sample = uni_idx
+                        uni_max = None
+                    else:
+                        uni_sample = None
+                        uni_max = max_samples_val if max_samples_val < n_samples else None
                     sprite_img = _generate_sprite_map(
                         grid_size=grid_size,
                         cell_size=cell_size,
-                        max_samples=max_samples_val if max_samples_val < n_samples else None,
+                        max_samples=uni_max,
                         show_borders=show_borders,
                         coords_2d_override=coords_2d,
-                        sample_indices=None,
+                        sample_indices=uni_sample,
                         morph_labels=morph_labels_arr,
                         morph_color_map=morph_color_map,
                         hd_tiebreak=hd_tiebreak,
@@ -7421,6 +9456,15 @@ def _render_sprite_map_for_space(
                             filter_labels=sprite_filter,
                             rng=rng,
                         )
+                        # Intersect with the selected region when restricting.
+                        if use_region and region_idx:
+                            _region_set = set(region_idx)
+                            pick = [i for i in pick if int(i) in _region_set]
+                            if not pick:
+                                st.warning(
+                                    "No images of the chosen labels fall inside "
+                                    "the selected region."
+                                )
                         sprite_img = _generate_sprite_map(
                             grid_size=grid_size,
                             cell_size=cell_size,

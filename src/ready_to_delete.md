@@ -10,6 +10,7 @@ This file tracks data and files in `<refined>/candescence_new/` that can be safe
 
 ## Files Ready for Deletion
 
+- [2026-06-18] `src/candescence/interface/apps/latent_explorer_app.py` :: `_render_all_latent_spaces()` - Orphaned after the "All Latent Spaces" grid was removed from Advanced analysis (it duplicated the primary "Latent space" view; its active-space switcher moved into that view). Function still defined but no longer called; safe to delete the function body.
 - [2026-02-05] `obsolete/deprecated_registries/production_registry.py` - Replaced by `core/model_zoo.py` (ModelZoo)
 - [2026-02-05] `obsolete/deprecated_registries/core_model_registry.py` - Replaced by `core/model_zoo.py` (ModelZoo)
 - [2026-02-05] `obsolete/deprecated_registries/interface_model_registry.py` - Replaced by `core/model_zoo.py` (ModelZoo)
