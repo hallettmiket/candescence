@@ -219,7 +219,7 @@ def main():
         if LOGO_PATH.exists():
             st.image(str(LOGO_PATH), width=200)
     with col_title:
-        st.title("Tendril VAE Training")
+        st.title("TLV VAE Training")
         st.caption("Guided training for Candida morphology analysis")
 
     # Initialize session state
@@ -884,6 +884,7 @@ def _render_dataset_report(train_num: int, val_num: int, test_num: int):
                 val_indices=val_df_indices,
                 test_indices=test_df_indices,
                 conditional_variables=cond_vars,
+                split_sizes=st.session_state["dataset_report_split_sizes"],
             )
 
         except Exception as e:
@@ -904,15 +905,6 @@ def _show_cached_dataset_report():
     split_sizes = st.session_state.get("dataset_report_split_sizes", {})
 
     if metadata_df is not None and train_indices is not None:
-        # Show note about sampling
-        if split_sizes:
-            st.caption(
-                f"HSV distributions computed from sampled images: "
-                f"{split_sizes.get('train_sampled', 0)} of {split_sizes.get('train', 0)} train, "
-                f"{split_sizes.get('val_sampled', 0)} of {split_sizes.get('val', 0)} val, "
-                f"{split_sizes.get('test_sampled', 0)} of {split_sizes.get('test', 0)} test"
-            )
-
         report_panel = DatasetReportPanel()
         report_panel.render(
             metadata_df=metadata_df,
@@ -920,6 +912,7 @@ def _show_cached_dataset_report():
             val_indices=val_indices,
             test_indices=test_indices,
             conditional_variables=cond_vars,
+            split_sizes=split_sizes,
         )
 
 
@@ -1119,51 +1112,6 @@ def _render_model_config():
                 help="Bottleneck width inside each squeeze-excitation gate: feature_dim // reduction_ratio. Master used 16.",
                 key="cfg_reduction_ratio",
             )
-
-        st.divider()
-        st.markdown("**Image Adjustment (deterministic HSV normalisation)**")
-        st.caption(
-            "Optionally recolour every image's background toward fixed "
-            "Hue/Saturation/Value targets before training (adds 'adjusted' "
-            "copies). Removes colour nuisance variation. Independent of FiLM "
-            "conditioning and augmentation."
-        )
-        adjust_images = st.checkbox(
-            "Adjust images to target HSV",
-            value=bool(st.session_state.get("cfg_adjust_images", False)),
-            help="Applies dataset._adjust_hsv: each image is shifted toward the "
-            "targets below. Only effective for conditional strategies.",
-            key="cfg_adjust_images",
-        )
-        if adjust_images:
-            acol1, acol2, acol3 = st.columns(3)
-            with acol1:
-                st.slider(
-                    "Target Hue",
-                    min_value=0.0, max_value=1.0,
-                    value=float(st.session_state.get("cfg_target_hue", 0.5)),
-                    step=0.05,
-                    help="0=red, 0.33=green, 0.66=blue. Typical agar: 0.1-0.3",
-                    key="cfg_target_hue",
-                )
-            with acol2:
-                st.slider(
-                    "Target Saturation",
-                    min_value=0.0, max_value=1.0,
-                    value=float(st.session_state.get("cfg_target_saturation", 0.5)),
-                    step=0.05,
-                    help="0=gray, 1=fully saturated",
-                    key="cfg_target_saturation",
-                )
-            with acol3:
-                st.slider(
-                    "Target Value",
-                    min_value=0.0, max_value=1.0,
-                    value=float(st.session_state.get("cfg_target_value", 0.5)),
-                    step=0.05,
-                    help="0=black, 1=bright",
-                    key="cfg_target_value",
-                )
 
         st.divider()
         st.markdown("**Decoder Background Augmentation (training)**")
@@ -1677,7 +1625,11 @@ def _validate_and_start():
         17: "tendril_vae",  # Invariant Tendril VAE (stage-1 identical to 14)
     }
     architecture = STRATEGY_ARCH_MAP.get(strategy, "tendril_vae")
-    is_conditional = (strategy in (7, 8, 9.6, 9.7, 13, 14, 15, 16))
+    # Strategy 17 (Invariant Tendril VAE) is conditional — stage-1 identical to
+    # 14 — and must be kept in sync with the rendering predicate in
+    # _render_model_config(); otherwise its conditioning variables are dropped
+    # here and the factory rejects it.
+    is_conditional = (strategy in (7, 8, 9.6, 9.7, 13, 14, 15, 16, 17))
     _decoder_pair_strategies = (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16)
     _augment_images_on = (
         st.session_state.get("cfg_augment_images", False)
@@ -1716,7 +1668,7 @@ def _validate_and_start():
         "architecture": architecture,
         "strategy": strategy,
         "latent_dim": st.session_state.cfg_latent_dim,
-        "conditional_variables": st.session_state.cfg_cond_vars if is_conditional else None,
+        "conditional_variables": _cond_vars_list,
         "intermediate_dim": st.session_state.get("cfg_intermediate_dim", 256),
         "leaky_relu_slope": st.session_state.get("cfg_leaky_slope", 0.02),
         # Fixed decoder conditioning for inference (only for conditional strategies)

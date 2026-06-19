@@ -58,6 +58,7 @@ class DatasetReportPanel:
         val_indices: List[int],
         test_indices: List[int],
         conditional_variables: List[str],
+        split_sizes: Optional[dict] = None,
     ) -> None:
         """
         Render the dataset report.
@@ -74,6 +75,13 @@ class DatasetReportPanel:
             Indices of test samples
         conditional_variables : List[str]
             List of conditioning variable names (e.g., ['average_hue'])
+        split_sizes : Optional[dict]
+            Full selected split sizes with keys ``train``/``val``/``test`` (the
+            sizes the training run will actually use) and the matching
+            ``*_sampled`` counts. When provided, the count metrics show the full
+            split and note that the HSV preview uses only a representative
+            subsample. When ``None``, the metrics fall back to the number of
+            sampled rows present in ``metadata_df``.
         """
         st.subheader("📊 Dataset Report")
 
@@ -93,7 +101,7 @@ class DatasetReportPanel:
                         df[col] = df[col] / 255.0
 
         # Sample counts
-        self._render_sample_counts(train_df, val_df, test_df)
+        self._render_sample_counts(train_df, val_df, test_df, split_sizes)
 
         st.divider()
 
@@ -115,20 +123,48 @@ class DatasetReportPanel:
         train_df: pd.DataFrame,
         val_df: pd.DataFrame,
         test_df: pd.DataFrame,
+        split_sizes: Optional[dict] = None,
     ) -> None:
-        """Render sample count metrics."""
+        """Render split-size metrics.
+
+        When ``split_sizes`` is supplied, the metrics show the full selected
+        split (what training will actually use) and note that the HSV preview
+        below was computed from a representative subsample for speed. Otherwise
+        they fall back to the number of rows actually present.
+        """
         col1, col2, col3, col4 = st.columns(4)
 
-        total = len(train_df) + len(val_df) + len(test_df)
+        if split_sizes:
+            train_full = split_sizes.get("train", len(train_df))
+            val_full = split_sizes.get("val", len(val_df))
+            test_full = split_sizes.get("test", len(test_df))
+        else:
+            train_full, val_full, test_full = len(train_df), len(val_df), len(test_df)
+        total = train_full + val_full + test_full
 
         with col1:
-            st.metric("Training", f"{len(train_df):,}")
+            st.metric("Training", f"{train_full:,}")
         with col2:
-            st.metric("Validation", f"{len(val_df):,}")
+            st.metric("Validation", f"{val_full:,}")
         with col3:
-            st.metric("Test", f"{len(test_df):,}")
+            st.metric("Test", f"{test_full:,}")
         with col4:
             st.metric("Total", f"{total:,}")
+
+        if split_sizes:
+            n_train_s = split_sizes.get("train_sampled", len(train_df))
+            n_val_s = split_sizes.get("val_sampled", len(val_df))
+            n_test_s = split_sizes.get("test_sampled", len(test_df))
+            sampled = n_train_s + n_val_s + n_test_s
+            if sampled < total:
+                st.info(
+                    "These counts are the **full split your training run will "
+                    "use**. To keep the preview fast, the HSV distributions and "
+                    "statistics below are computed from a representative "
+                    f"subsample only — {n_train_s:,} train, {n_val_s:,} val, "
+                    f"{n_test_s:,} test ({sampled:,} of {total:,} images). The "
+                    "subsample does not change what gets trained."
+                )
 
     def _render_hsv_distributions(
         self,
