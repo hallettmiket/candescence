@@ -422,13 +422,16 @@ class Factory:
                 )
             self.config.architecture = 'cond_uc_vae'
 
-        elif strategy in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16):
+        elif strategy in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16, 17):
             if not getattr(self.config, 'conditional_variables', None):
                 raise ValueError(
                     f"Strategy {strategy} requires conditional_variables"
                 )
 
-            if strategy == 14:
+            if strategy in (14, 17):
+                # Strategy 17 = Invariant Tendril VAE: identical architecture to
+                # Strategy 14; the difference is a VFAE-style invariance penalty
+                # applied during stage-2 tendril training (see tendril_sub.py).
                 self.config.architecture = 'tendril_vae'
             elif strategy in (15, 16):
                 # Strategies 15 & 16: per-variable FiLM on outer Tendril VAE.

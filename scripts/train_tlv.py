@@ -115,13 +115,35 @@ def _build_tendril_arguments(config: TLVConfig) -> Dict[str, Any]:
         "tendril_MSE_weight": recon_weight,
         "tendril_log_cosh_weight": recon_weight,
         "tendril_KL_weight": getattr(config, "tendril_kl_weight", 1.0),
+        # VFAE-style invariance penalty (Strategy 17). 0 weights → no penalty.
+        "tendril_invariance_plate_weight": getattr(config, "tendril_invariance_plate_weight", 0.0),
+        "tendril_invariance_hsv_weight": getattr(config, "tendril_invariance_hsv_weight", 0.0),
+        "tendril_invariance_pheno_weight": getattr(config, "tendril_invariance_pheno_weight", 0.0),
+        "tendril_invariance_kernel": getattr(config, "tendril_invariance_kernel", "hsic"),
     }
+
+
+def _invariance_active(config: Any) -> bool:
+    """True when any VFAE invariance weight is positive (Strategy 17)."""
+    return any(
+        float(getattr(config, k, 0.0) or 0.0) > 0
+        for k in (
+            "tendril_invariance_plate_weight",
+            "tendril_invariance_hsv_weight",
+            "tendril_invariance_pheno_weight",
+        )
+    )
 
 
 def _run_tendril_phase(factory: Factory) -> None:
     """Compute skip connections and train one Tendril sub-VAE per level."""
     logger.info("=== Phase 2: training tendrils ===")
-    skip_logger = SkipLogger(factory.vae, factory.config.device)
+    invariance = _invariance_active(factory.config)
+    if invariance:
+        logger.info("Invariance penalty ACTIVE (Strategy 17) — collecting nuisance.")
+    skip_logger = SkipLogger(
+        factory.vae, factory.config.device, collect_nuisance=invariance,
+    )
     skip_logger.compute_skip_connections(factory.train_dataloader, "train")
     skip_logger.compute_skip_connections(factory.validation_dataloader, "validation")
 
@@ -130,11 +152,16 @@ def _run_tendril_phase(factory: Factory) -> None:
 
     train_skips = skip_logger.skips["train"]
     val_skips = skip_logger.skips["validation"]
+    train_nuisance = skip_logger.nuisance.get("train")
+    val_nuisance = skip_logger.nuisance.get("validation")
     layer_keys = sorted(train_skips.keys())
     logger.info(f"Training {len(layer_keys)} tendrils for layers {layer_keys}")
 
     for key in layer_keys:
-        tendrils.add_tendril(str(key), train_skips[key], val_skips[key])
+        tendrils.add_tendril(
+            str(key), train_skips[key], val_skips[key],
+            train_nuisance=train_nuisance, validation_nuisance=val_nuisance,
+        )
 
     for idx, key in enumerate(layer_keys, 1):
         logger.info(f"Training tendril {idx}/{len(layer_keys)} (layer {key})")
@@ -201,13 +228,13 @@ def main() -> None:
     factory.train_model()
     logger.info("Outer VAE training complete")
 
-    if strategy in (14, 15, 16):
+    if strategy in (14, 15, 16, 17):
         _run_tendril_phase(factory)
 
     logger.info("Run finished cleanly")
     logger.info(f"Model:    {config.models_path / 'model.pth'}")
     logger.info(f"Args:     {config.models_path / 'args.json'}")
-    if strategy in (14, 15, 16):
+    if strategy in (14, 15, 16, 17):
         logger.info(f"Tendrils: {config.models_path / 'tendrils'}")
 
 

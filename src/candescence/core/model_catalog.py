@@ -25,7 +25,9 @@ import os
 from typing import Iterable
 
 # Strategy numbers exposed to end users by default, in display order.
-PUBLIC_STRATEGIES: tuple[int, ...] = (14, 1, 0)
+# Strategy 17 (Invariant Tendril VAE / VFAE-style) is surfaced for training the
+# nuisance-invariant tendril model from the GUI.
+PUBLIC_STRATEGIES: tuple[int, ...] = (14, 17, 1, 0)
 
 # Architecture names exposed to end users by default. Kept in sync with the
 # strategy->architecture mapping in ``candescence.tlv.factory._prepare_strategy``.

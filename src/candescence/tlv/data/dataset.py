@@ -152,6 +152,11 @@ class LearningDataset(Dataset):
         self.plate_phys_categories: List[Any] = list(
             getattr(config, 'plate_phys_categories', []) or []
         )
+        # Plate + morphology vocabularies for Strategy 17 invariance training.
+        self.plate_categories: List[Any] = list(getattr(config, 'plate_categories', []) or [])
+        self.morphology_categories: List[Any] = list(
+            getattr(config, 'morphology_categories', []) or []
+        )
 
     def __getitem__(
         self,
@@ -222,7 +227,7 @@ class LearningDataset(Dataset):
                 cond_decoder = {k: v.clone() for k, v in cond_encoder.items()}
             return img, cond_encoder, cond_decoder, index
 
-        elif self.strategy in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14):
+        elif self.strategy in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 17):
             # Denoising direction: on an augmented row, the encoder sees
             # the augmented hue and the decoder is given the parent (real)
             # row's hue. On non-augmented rows both sides match.
@@ -430,15 +435,34 @@ class FullDataset(Dataset):
         self.day_categories: List[str] = sorted(day_values)
         self.media_categories: List[str] = sorted(media_values)
         self.plate_phys_categories: List[str] = sorted(plate_phys_values)
+        # Plate-only vocabulary — the technical nuisance for invariant (Strategy
+        # 17) training. Distinct from plate_phys (plate:media:day).
+        self.plate_categories: List[str] = sorted(
+            self.target_df['plate'].astype(str).unique().tolist()
+        )
+        # Morphology vocabulary for the optional supervised-contrastive term
+        # (labelled rows only; 'unlabelled'/missing are excluded).
+        if 'manual_formation' in self.target_df.columns:
+            morph = [
+                m for m in self.target_df['manual_formation'].astype(str).unique()
+                if m not in ('unlabelled', 'nan', 'None', '')
+            ]
+            self.morphology_categories: List[str] = sorted(morph)
+        else:
+            self.morphology_categories = []
 
         # Mirror to config for inference-time reconstruction.
         self.config.day_categories = list(self.day_categories)
         self.config.media_categories = list(self.media_categories)
         self.config.plate_phys_categories = list(self.plate_phys_categories)
+        self.config.plate_categories = list(self.plate_categories)
+        self.config.morphology_categories = list(self.morphology_categories)
         logger.info(
             f"Fitted categorical vocabularies: day={self.day_categories}, "
             f"media={self.media_categories}, "
-            f"plate_phys=[{len(self.plate_phys_categories)} categories]"
+            f"plate_phys=[{len(self.plate_phys_categories)} categories], "
+            f"plate=[{len(self.plate_categories)} categories], "
+            f"morphology={self.morphology_categories}"
         )
 
     def _ensure_directories(self) -> None:

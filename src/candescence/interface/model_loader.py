@@ -109,7 +109,7 @@ class TLVModelWrapper(CandescenceModel):
             x = x.to(self._device)
             cond = _cond_to_device(cond, self._device)
 
-            if self._strategy in (14, 15, 16):
+            if self._strategy in (14, 15, 16, 17):
                 # Tendril VAE: encoder(x, cond) -> (z, mu, logvar, skip)
                 z, mu, logvar, skip = self._vae.encoder(x, cond)
                 self._last_skip = skip
@@ -172,7 +172,7 @@ class TLVModelWrapper(CandescenceModel):
             x = x.to(self._device)
             cond = _cond_to_device(cond, self._device)
 
-            if self._strategy in (14, 15, 16):
+            if self._strategy in (14, 15, 16, 17):
                 z, mu, logvar, skip = self._vae.encoder(x, cond)
                 self._last_skip = skip
                 return z, mu, logvar
@@ -234,7 +234,7 @@ class TLVModelWrapper(CandescenceModel):
             z = z.to(self._device)
             cond = _cond_to_device(cond, self._device)
 
-            if self._strategy in (14, 15, 16):
+            if self._strategy in (14, 15, 16, 17):
                 # Tendril VAE: decoder(z, skip, cond)
                 return self._vae.decoder(z, self._last_skip, cond)
 
@@ -331,7 +331,7 @@ class TLVModelWrapper(CandescenceModel):
             if cond is not None:
                 cond = cond.to(self._device).float()
 
-            if self._strategy in (14, 15, 16):
+            if self._strategy in (14, 15, 16, 17):
                 # Tendril VAE: decoder(z, skip, cond)
                 return self._vae.decoder(z, skip, cond)
 

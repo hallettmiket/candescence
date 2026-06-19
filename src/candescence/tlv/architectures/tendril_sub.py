@@ -56,6 +56,9 @@ class Tendrils:
         self.cond_dims: Dict[str, int] = dict(
             self.arguments.get('tendril_cond_dims', {}) or {}
         )
+        # Ordered nuisance components carried per batch for the VFAE-style
+        # invariance penalty (Strategy 17). Empty → ordinary tendril training.
+        self.nuisance_keys: Tuple[str, ...] = ()
 
     def normalize_per_image(self, tensor: torch.Tensor) -> torch.Tensor:
         """
@@ -84,6 +87,7 @@ class Tendrils:
         tensor: torch.Tensor,
         shuffle: bool = True,
         cond: Optional[Dict[str, torch.Tensor]] = None,
+        nuisance: Optional[Dict[str, torch.Tensor]] = None,
     ) -> DataLoader:
         """
         Create DataLoader from tensor, with optional cond tensors.
@@ -105,13 +109,14 @@ class Tendrils:
             PyTorch DataLoader
         """
         batch_size = self.arguments.get('tendril_batch_size', 256)
+        tensors = [tensor]
+        # Cond tensors first (ordered by cond_keys), then nuisance tensors
+        # (ordered by nuisance_keys) — the trainer unpacks by this same order.
         if cond and self.cond_keys:
-            # Order cond tensors deterministically by self.cond_keys so the
-            # trainer can unpack by position.
-            cond_tensors = [cond[k] for k in self.cond_keys]
-            dataset = TensorDataset(tensor, *cond_tensors)
-        else:
-            dataset = TensorDataset(tensor)
+            tensors += [cond[k] for k in self.cond_keys]
+        if nuisance and self.nuisance_keys:
+            tensors += [nuisance[k] for k in self.nuisance_keys]
+        dataset = TensorDataset(*tensors)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
         return dataloader
 
@@ -122,6 +127,8 @@ class Tendrils:
         validation_dataset: torch.Tensor,
         train_cond: Optional[Dict[str, torch.Tensor]] = None,
         validation_cond: Optional[Dict[str, torch.Tensor]] = None,
+        train_nuisance: Optional[Dict[str, torch.Tensor]] = None,
+        validation_nuisance: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """
         Add a new tendril VAE for a specific encoder layer.
@@ -155,14 +162,22 @@ class Tendrils:
             cond_dims=self.cond_dims,
         )
 
+        # Lock in the nuisance component order (plate, hsv, morph as present)
+        # from the first tendril; all tendrils share the same structure.
+        if train_nuisance:
+            order = [k for k in ('plate', 'hsv', 'morph') if k in train_nuisance]
+            self.nuisance_keys = tuple(order)
+
         norm_train_dataset = self.normalize_per_image(train_dataset)
         norm_val_dataset = self.normalize_per_image(validation_dataset)
 
         train_dataloader = self.create_dataloader(
             norm_train_dataset, shuffle=True, cond=train_cond,
+            nuisance=train_nuisance,
         )
         validation_dataloader = self.create_dataloader(
             norm_val_dataset, shuffle=False, cond=validation_cond,
+            nuisance=validation_nuisance,
         )
 
         self.tendril_trainers[key] = TendrilTrainer(
@@ -171,10 +186,12 @@ class Tendrils:
             validation_dataloader=validation_dataloader,
             arguments=self.arguments,
             cond_keys=self.cond_keys,
+            nuisance_keys=self.nuisance_keys,
         )
         logger.info(
             f"Added tendril with key '{key}' "
-            f"(cond_keys={self.cond_keys or '()'})"
+            f"(cond_keys={self.cond_keys or '()'}, "
+            f"nuisance_keys={self.nuisance_keys or '()'})"
         )
 
     def get_tendril(self, key: Union[int, str]) -> "TendrilTrainer":
@@ -609,6 +626,7 @@ class TendrilTrainer:
         validation_dataloader: DataLoader,
         arguments: dict,
         cond_keys: Tuple[str, ...] = (),
+        nuisance_keys: Tuple[str, ...] = (),
     ) -> None:
         self.arguments = arguments
         self.device = self.arguments['DEVICE']
@@ -616,6 +634,9 @@ class TendrilTrainer:
         # Cached so ``.train()`` knows how to unpack each batch and
         # rebuild the cond dict the model expects.
         self.cond_keys: Tuple[str, ...] = tuple(cond_keys)
+        # Ordered nuisance components appended after the cond tensors in each
+        # batch (Strategy 17 invariance penalty); empty → no penalty.
+        self.nuisance_keys: Tuple[str, ...] = tuple(nuisance_keys)
 
         actual_lr = arguments.get('tendril_lr', 1e-6)
         actual_wd = arguments.get('tendril_weight_decay', 0)
@@ -653,6 +674,22 @@ class TendrilTrainer:
             for k, t in zip(self.cond_keys, cond_tensors)
         }
 
+    def _unpack_nuisance(
+        self, batch: Any,
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        """Rebuild the nuisance dict from the tensors appended after the cond
+        tensors (order = ``self.nuisance_keys``). ``None`` when no nuisance."""
+        if not self.nuisance_keys:
+            return None
+        start = 1 + len(self.cond_keys)
+        tensors = batch[start:start + len(self.nuisance_keys)]
+        if len(tensors) < len(self.nuisance_keys):
+            return None
+        return {
+            k: t.to(self.device)
+            for k, t in zip(self.nuisance_keys, tensors)
+        }
+
     def train(
         self,
         key: str,
@@ -677,6 +714,8 @@ class TendrilTrainer:
             kl_loss_sum = 0.0
             recon_loss_sum = 0.0
 
+            inv_sum = 0.0
+            inv_parts_sum: Dict[str, float] = {}
             for batch in self.train_dataloader:
                 x = batch[0].to(self.device)
                 cond = self._unpack_cond(batch)
@@ -691,6 +730,18 @@ class TendrilTrainer:
                     arguments=self.arguments,
                     epoch=epoch
                 )
+
+                # VFAE-style invariance penalty on the latent mu (Strategy 17).
+                nuisance = self._unpack_nuisance(batch)
+                if nuisance is not None:
+                    from candescence.tlv.losses import tendril_invariance_loss
+                    inv_loss, inv_parts = tendril_invariance_loss(
+                        mu, nuisance, self.arguments,
+                    )
+                    loss = loss + inv_loss
+                    inv_sum += float(inv_loss.detach())
+                    for k, v in inv_parts.items():
+                        inv_parts_sum[k] = inv_parts_sum.get(k, 0.0) + v
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -717,6 +768,16 @@ class TendrilTrainer:
                     f"Tendril '{key}' Epoch [{epoch + 1}/{num_epochs}]: "
                     f"logvar very negative ({logvar.mean().item():.2f}) — "
                     f"LATENT COLLAPSE detected (posterior ≈ prior)"
+                )
+
+            if self.nuisance_keys and inv_parts_sum:
+                nb = max(len(self.train_dataloader), 1)
+                parts_str = ' '.join(
+                    f"{k}={v / nb:.4f}" for k, v in inv_parts_sum.items()
+                )
+                logger.info(
+                    f"Tendril '{key}' Epoch [{epoch + 1}/{num_epochs}] "
+                    f"INVARIANCE total={inv_sum / nb:.4f} | {parts_str}"
                 )
 
             if progress_callback:

@@ -37,16 +37,30 @@ class SkipLogger:
     through the network.
     """
 
-    def __init__(self, vae: nn.Module, device: torch.device) -> None:
+    def __init__(
+        self,
+        vae: nn.Module,
+        device: torch.device,
+        collect_nuisance: bool = False,
+    ) -> None:
         """
         Initialize SkipLogger with VAE model and device.
 
         Args:
             vae: The VAE model with encoder.
             device: Device (CPU or GPU) for computation.
+            collect_nuisance: When True, also collect per-image nuisance tensors
+                (plate one-hot, HSV, morphology label) row-aligned with the skip
+                features, for Strategy-17 invariance training.
         """
         self.vae = vae.to(device)
         self.device = device
+        self.collect_nuisance = collect_nuisance
+        # Per-phase nuisance: {'plate': (N,P), 'hsv': (N,3), 'morph': (N,)}.
+        self.nuisance: Dict[str, Optional[Dict[str, torch.Tensor]]] = {
+            'train': None,
+            'validation': None,
+        }
         self.skips: Dict[str, Dict[int, torch.Tensor]] = {
             'train': {},
             'validation': {}
@@ -101,10 +115,17 @@ class SkipLogger:
         # FiLM conditioning aligned with the (batch-order) skip tensors.
         # Only populated when encoder_cond is a dict (Strategies 15/16).
         cond_data: Dict[str, List[torch.Tensor]] = {}
+        # Per-image nuisance tensors (plate one-hot, HSV, morphology), row-aligned
+        # with the skip features, for Strategy-17 invariance training.
+        nuisance_data: Dict[str, List[torch.Tensor]] = {}
+        dataset = getattr(dataloader, 'dataset', None)
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(dataloader):
                 x, encoder_cond, decoder_cond, cond, indices = self._prepare_batch_inputs(batch)
+                if self.collect_nuisance and dataset is not None:
+                    for key, tensor in self._batch_nuisance(dataset, indices).items():
+                        nuisance_data.setdefault(key, []).append(tensor)
 
                 x = x.to(self.device).float()
                 encoder_cond = _cond_to_device(encoder_cond, self.device)
@@ -149,6 +170,12 @@ class SkipLogger:
                 key: torch.cat(parts, dim=0) for key, parts in cond_data.items()
             }
 
+        # Concatenate nuisance tensors (same batch order as the skips).
+        if nuisance_data:
+            self.nuisance[phase] = {
+                key: torch.cat(parts, dim=0) for key, parts in nuisance_data.items()
+            }
+
         # === DIAGNOSTIC: Log skip tensor stats after concatenation ===
         logger.info(f"=== SKIP CONNECTION STATS after compute_skip_connections ({phase}) ===")
         for layer in sorted(concatenated_skips.keys()):
@@ -163,6 +190,42 @@ class SkipLogger:
         logger.info("============================================================")
 
         self.log_epoch(phase, concatenated_skips)
+
+    def _batch_nuisance(
+        self, dataset: Any, indices: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        """Build per-image nuisance tensors for one batch (plate one-hot, HSV,
+        morphology label), looked up from the dataset metadata by row index."""
+        rows = dataset.meta_df_subset.iloc[[int(i) for i in indices]]
+        out: Dict[str, torch.Tensor] = {}
+
+        plate_cats = list(getattr(dataset, 'plate_categories', []) or [])
+        if plate_cats:
+            cat_index = {str(c): i for i, c in enumerate(plate_cats)}
+            oh = torch.zeros((len(rows), len(plate_cats)), dtype=torch.float32)
+            for r, val in enumerate(rows['plate'].astype(str).tolist()):
+                j = cat_index.get(val)
+                if j is not None:
+                    oh[r, j] = 1.0
+            out['plate'] = oh
+
+        hsv = torch.tensor(
+            rows[['average_hue', 'average_saturation', 'average_value']]
+            .to_numpy(dtype='float32') / 255.0,
+            dtype=torch.float32,
+        )
+        out['hsv'] = hsv
+
+        morph_cats = list(getattr(dataset, 'morphology_categories', []) or [])
+        if morph_cats and 'manual_formation' in rows.columns:
+            cat_index = {str(c): i for i, c in enumerate(morph_cats)}
+            labels = torch.tensor(
+                [cat_index.get(str(v), -1) for v in rows['manual_formation'].tolist()],
+                dtype=torch.long,
+            )
+            out['morph'] = labels
+
+        return out
 
     def generate_report(
         self,

@@ -241,7 +241,7 @@ class VAETrainer:
 
             return torch.stack(new_images)
 
-        elif strategy in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16):
+        elif strategy in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16, 17):
             # Denoising direction: when augmenting, the dataset iterates
             # over augmented rows (encoder input). The reconstruction
             # target is the canonical parent (real) image, so the latent
@@ -505,7 +505,7 @@ class VAETrainer:
             if (epoch + 1) % report_periodicity == 0:
                 self.reconstruction_compare(n=10, epoch=epoch)
                 strategy = getattr(self.config, 'strategy', 0)
-                if strategy in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16):
+                if strategy in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16, 17):
                     self.reconstruction_across_spectrum(n=1, epoch=epoch)
 
         # Collect skip connections after training for tendril Stage 2.
@@ -641,7 +641,7 @@ class VAETrainer:
         per called epoch.
         """
         strategy = getattr(self.config, 'strategy', 0)
-        if strategy not in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16):
+        if strategy not in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16, 17):
             raise ValueError(
                 f"reconstruction_across_spectrum requires a conditional strategy, got {strategy}"
             )

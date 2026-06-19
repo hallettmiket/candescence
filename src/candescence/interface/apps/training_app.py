@@ -424,6 +424,7 @@ def _render_sidebar(status: str):
     st.subheader("Model")
     _strategy = _coerce_strategy_int(st.session_state.get("cfg_strategy", 14))
     _strategy_info = {
+        17: "**Invariant Tendril VAE (Strategy #17)**\n\nStage-1 identical to Strategy 14; stage-2 penalises each tendril latent (HSIC/MMD) to be independent of plate + background H/S/V, with an optional supervised-contrastive morphology term. Configure weights in the Tendril section.",
         15: "**Tendril VAE + per-variable FiLM (Strategy #15)**\n\nSame outer VAE as Strategy 14 but with separate FiLM modules for hue, day, and media at each block. Day and media one-hot from filename; targets batch-effect disentangling.",
         14: "**Tendril VAE (Strategy #14)**\n\nFiLM-conditioned VAE with skip connections for background-normalized morphology learning.",
         9.6: "**Cond U-Net VAE + Channel Attention (Strategy #9.6)**\n\nFiLM-conditioned VAE with squeeze-excitation gates on every skip connection. Used for the manuscript's adjustment-section nuisance-ablation experiments. Typically paired with HSV image adjustment.",
@@ -925,6 +926,7 @@ def _show_cached_dataset_report():
 def _render_model_config():
     """Render model architecture configuration."""
     STRATEGY_OPTIONS = {
+        17: "Strategy 17: Invariant Tendril VAE (VFAE-style: plate/HSV-invariant)",
         16: "Strategy 16: Tendril VAE + per-variable FiLM (hue, media) — no day",
         15: "Strategy 15: Tendril VAE + per-variable FiLM (hue, day, media)",
         14: "Strategy 14: Tendril VAE (FiLM-conditioned, recommended)",
@@ -939,6 +941,13 @@ def _render_model_config():
     }
 
     STRATEGY_DESCRIPTIONS = {
+        17: "Invariant Tendril VAE (VFAE-style). Same outer VAE and stage-1 training as "
+            "Strategy 14, but during stage-2 each tendril latent is penalised (HSIC/MMD) to "
+            "be statistically independent of the chosen technical nuisances — plate and "
+            "background H/S/V — with an optional supervised-contrastive term that keeps "
+            "morphology structure. Produces tendril embeddings that reflect colony phenotype "
+            "while ignoring batch/colour nuisances; no nuisance labels are needed at inference. "
+            "Configure the penalty weights in the Tendril section below.",
         16: "Same outer Tendril VAE as Strategy 15 but drops the day FiLM pathway. "
             "Motivated by variance analysis (scripts/hue_day_medium_plate_variance.py) "
             "showing day contributes <0.25% of hue variance; a dedicated day FiLM may "
@@ -975,7 +984,7 @@ def _render_model_config():
     # Curate the strategy list: end users see only the public tier (0/1/14);
     # research mode reveals every architecture. Toggle is shared across pages.
     render_research_mode_toggle()
-    all_strategies = [14, 15, 16, 9.6, 7, 8, 13, 1, 11, 12, 0]
+    all_strategies = [14, 17, 15, 16, 9.6, 7, 8, 13, 1, 11, 12, 0]
     strategy_options = filter_strategies(
         all_strategies, research_mode=research_mode_enabled()
     )
@@ -994,7 +1003,7 @@ def _render_model_config():
 
     st.caption(STRATEGY_DESCRIPTIONS[strategy])
 
-    is_conditional = (strategy in (7, 8, 9.6, 13, 14, 15, 16))
+    is_conditional = (strategy in (7, 8, 9.6, 13, 14, 15, 16, 17))
     if strategy in (0, 1, 11, 12):
         st.warning(
             "Unconditional strategies ignore **Conditioning variables** and FiLM. "
@@ -1271,7 +1280,7 @@ def _render_model_config():
         st.session_state["cfg_fixed_decoder_values"] = {}
 
     # Tendril VAE parameters (Strategies 14, 15 & 16)
-    if strategy in (14, 15, 16):
+    if strategy in (14, 15, 16, 17):
         st.divider()
         st.subheader("Tendril VAE Parameters")
         st.caption(
@@ -1355,6 +1364,51 @@ def _render_model_config():
                     help="Weight for reconstruction loss (MSE or Log-Cosh) in tendril training.",
                     key="cfg_tendril_recon_weight"
                 )
+
+        # --- Invariance (VFAE) controls — Strategy 17 only ---
+        if strategy == 17:
+            st.markdown("**Invariance (VFAE) — make tendril latents nuisance-free**")
+            st.caption(
+                "Each tendril latent is penalised to be statistically independent "
+                "(HSIC/MMD) of the chosen technical nuisances. Set a weight to 0 to "
+                "skip that term. Larger weights remove more nuisance but risk latent "
+                "collapse — verify with the probe panel in the Explorer."
+            )
+            icol1, icol2, icol3 = st.columns(3)
+            with icol1:
+                st.number_input(
+                    "Plate invariance weight (λ_plate)",
+                    min_value=0.0, max_value=100.0, value=1.0, step=0.5, format="%.2f",
+                    help="Penalise dependence of the tendril latent on the plate "
+                         "(technical batch). 0 = off.",
+                    key="cfg_tendril_invariance_plate_weight",
+                )
+            with icol2:
+                st.number_input(
+                    "HSV invariance weight (λ_hsv)",
+                    min_value=0.0, max_value=100.0, value=1.0, step=0.5, format="%.2f",
+                    help="Penalise dependence on background hue/saturation/value "
+                         "(jointly). 0 = off.",
+                    key="cfg_tendril_invariance_hsv_weight",
+                )
+            with icol3:
+                st.number_input(
+                    "Phenotype weight (λ_pheno)",
+                    min_value=0.0, max_value=100.0, value=0.0, step=0.5, format="%.2f",
+                    help="Optional supervised-contrastive term that keeps morphology "
+                         "structure. Needs 'Merge manually-labelled images' enabled. "
+                         "0 = off.",
+                    key="cfg_tendril_invariance_pheno_weight",
+                )
+            st.radio(
+                "Independence kernel",
+                options=["hsic", "mmd"],
+                index=0, horizontal=True,
+                help="HSIC = kernel independence (handles high-cardinality plate + "
+                     "continuous HSV uniformly; recommended). MMD = group distribution "
+                     "matching (better for low-cardinality categoricals).",
+                key="cfg_tendril_invariance_kernel",
+            )
 
     # Advanced options
     if st.checkbox("Show advanced architecture options", key="show_arch_advanced"):
@@ -1620,6 +1674,7 @@ def _validate_and_start():
         14: "tendril_vae",
         15: "tendril_vae",
         16: "tendril_vae",
+        17: "tendril_vae",  # Invariant Tendril VAE (stage-1 identical to 14)
     }
     architecture = STRATEGY_ARCH_MAP.get(strategy, "tendril_vae")
     is_conditional = (strategy in (7, 8, 9.6, 9.7, 13, 14, 15, 16))
@@ -1719,6 +1774,11 @@ def _validate_and_start():
         "tendril_loss_fn": st.session_state.get("cfg_tendril_loss_fn", "MSE"),
         "tendril_kl_weight": st.session_state.get("cfg_tendril_kl_weight", 1.0),
         "tendril_recon_weight": st.session_state.get("cfg_tendril_recon_weight", 1.0),
+        # Strategy 17 (Invariant Tendril VAE) VFAE penalty weights.
+        "tendril_invariance_plate_weight": st.session_state.get("cfg_tendril_invariance_plate_weight", 0.0),
+        "tendril_invariance_hsv_weight": st.session_state.get("cfg_tendril_invariance_hsv_weight", 0.0),
+        "tendril_invariance_pheno_weight": st.session_state.get("cfg_tendril_invariance_pheno_weight", 0.0),
+        "tendril_invariance_kernel": st.session_state.get("cfg_tendril_invariance_kernel", "hsic"),
         # Output
         "experiment_name": st.session_state.cfg_exp_name,
         "save_name": st.session_state.cfg_save_name,

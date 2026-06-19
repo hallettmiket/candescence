@@ -391,6 +391,151 @@ def get_kl_log_cosh_loss_tendril(
     return total_loss, kl_loss, log_cosh_loss_scalar
 
 
+# ===========================================================================
+# VFAE-style nuisance-invariance penalties (Strategy 17 / Invariant Tendril VAE)
+# ---------------------------------------------------------------------------
+# These act on a tendril's latent ``mu`` to make it statistically independent
+# of technical nuisances (plate, background H/S/V), optionally with a
+# supervised-contrastive term that keeps morphology structure. They are added
+# to the tendril loss when the corresponding weights are > 0; with all weights
+# 0 they are never called and the tendril trains exactly as before.
+# ===========================================================================
+
+
+def _rbf_kernel(x: torch.Tensor) -> torch.Tensor:
+    """RBF (Gaussian) kernel matrix with the median-distance heuristic bandwidth."""
+    sq = torch.cdist(x, x) ** 2  # (n, n) squared Euclidean distances
+    with torch.no_grad():
+        pos = sq[sq > 0]
+        med = torch.median(pos) if pos.numel() > 0 else torch.tensor(
+            1.0, device=x.device, dtype=x.dtype
+        )
+    gamma = 1.0 / (med + 1e-8)
+    return torch.exp(-gamma * sq)
+
+
+def _hsic(k: torch.Tensor, ll: torch.Tensor) -> torch.Tensor:
+    """Biased empirical HSIC between two kernel matrices (tr(HKH·L) / (n-1)^2)."""
+    n = k.shape[0]
+    kc = k - k.mean(0, keepdim=True) - k.mean(1, keepdim=True) + k.mean()
+    return (kc * ll).sum() / (max(n - 1, 1) ** 2)
+
+
+def hsic_penalty(z: torch.Tensor, s: torch.Tensor, categorical: bool) -> torch.Tensor:
+    """Normalised HSIC dependence between latent ``z`` and nuisance ``s`` (in [0, 1]).
+
+    ``s`` is a one-hot matrix (``categorical=True`` → delta/linear kernel) or a
+    continuous matrix (``categorical=False`` → RBF kernel). 0 means independent.
+    """
+    if z.shape[0] < 4:
+        return z.new_zeros(())
+    k = _rbf_kernel(z)
+    ll = (s @ s.t()) if categorical else _rbf_kernel(s)
+    hsic_zs = _hsic(k, ll)
+    denom = torch.sqrt(torch.clamp(_hsic(k, k) * _hsic(ll, ll), min=0.0)) + 1e-8
+    return hsic_zs / denom
+
+
+def mmd_penalty(z: torch.Tensor, group_onehot: torch.Tensor) -> torch.Tensor:
+    """Mean RBF-MMD² between each group's latent distribution and the pooled one.
+
+    A simpler alternative to HSIC for low-cardinality categorical nuisances.
+    Groups with fewer than 2 members in the batch are skipped.
+    """
+    if z.shape[0] < 4:
+        return z.new_zeros(())
+    k = _rbf_kernel(z)
+    n = z.shape[0]
+    pooled = k.mean()
+    total = z.new_zeros(())
+    n_groups = 0
+    labels = group_onehot.argmax(dim=1)
+    for g in torch.unique(labels):
+        mask = labels == g
+        ng = int(mask.sum())
+        if ng < 2:
+            continue
+        kgg = k[mask][:, mask].mean()
+        kgp = k[mask].mean()
+        total = total + (kgg - 2 * kgp + pooled)
+        n_groups += 1
+    return total / n_groups if n_groups > 0 else z.new_zeros(())
+
+
+def supcon_penalty(
+    z: torch.Tensor,
+    labels: torch.Tensor,
+    mask: torch.Tensor,
+    temperature: float = 0.1,
+) -> torch.Tensor:
+    """Supervised-contrastive loss over labelled rows (``mask``).
+
+    Pulls same-label latents together / pushes different-label apart. Returns 0
+    when there are too few labelled rows or fewer than two distinct labels.
+    """
+    idx = mask.nonzero(as_tuple=False).flatten()
+    if idx.numel() < 2:
+        return z.new_zeros(())
+    zl = F.normalize(z[idx], dim=1)
+    yl = labels[idx]
+    if torch.unique(yl).numel() < 2:
+        return z.new_zeros(())
+    sim = zl @ zl.t() / temperature
+    sim = sim - sim.max(dim=1, keepdim=True).values.detach()
+    n = zl.shape[0]
+    self_mask = torch.eye(n, dtype=torch.bool, device=z.device)
+    exp_sim = torch.exp(sim).masked_fill(self_mask, 0.0)
+    log_prob = sim - torch.log(exp_sim.sum(dim=1, keepdim=True) + 1e-8)
+    pos = (yl.unsqueeze(0) == yl.unsqueeze(1)) & ~self_mask
+    pos_counts = pos.sum(dim=1)
+    valid = pos_counts > 0
+    if valid.sum() == 0:
+        return z.new_zeros(())
+    mean_log_prob_pos = (pos.float() * log_prob).sum(dim=1)[valid] / pos_counts[valid]
+    return -mean_log_prob_pos.mean()
+
+
+def tendril_invariance_loss(
+    mu: torch.Tensor,
+    nuisance: dict,
+    arguments: dict,
+) -> Tuple[torch.Tensor, dict]:
+    """Assemble the VFAE-style invariance penalty for one tendril batch.
+
+    ``nuisance`` carries (any of) ``'plate'`` (one-hot), ``'hsv'`` (N×3) and
+    ``'morph'`` (N int label, ``-1`` = unlabelled). Returns ``(loss, parts)``
+    where ``parts`` are detached floats for logging.
+    """
+    kernel = arguments.get('tendril_invariance_kernel', 'hsic')
+    w_plate = float(arguments.get('tendril_invariance_plate_weight', 0.0) or 0.0)
+    w_hsv = float(arguments.get('tendril_invariance_hsv_weight', 0.0) or 0.0)
+    w_pheno = float(arguments.get('tendril_invariance_pheno_weight', 0.0) or 0.0)
+
+    total = mu.new_zeros(())
+    parts: dict = {}
+
+    plate = nuisance.get('plate')
+    if w_plate > 0 and plate is not None:
+        p = mmd_penalty(mu, plate) if kernel == 'mmd' else hsic_penalty(mu, plate, True)
+        parts['plate'] = float(p.detach())
+        total = total + w_plate * p
+
+    hsv = nuisance.get('hsv')
+    if w_hsv > 0 and hsv is not None:
+        h = hsic_penalty(mu, hsv, False)
+        parts['hsv'] = float(h.detach())
+        total = total + w_hsv * h
+
+    morph = nuisance.get('morph')
+    if w_pheno > 0 and morph is not None:
+        labelled = morph >= 0
+        sc = supcon_penalty(mu, morph, labelled)
+        parts['pheno'] = float(sc.detach())
+        total = total + w_pheno * sc
+
+    return total, parts
+
+
 def get_kl_mse_loss(
     x: torch.Tensor,
     x_hat: torch.Tensor,

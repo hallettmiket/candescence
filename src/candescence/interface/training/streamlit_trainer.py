@@ -231,6 +231,11 @@ class StreamlitTrainer:
             'tendril_KL_weight': getattr(self.config, 'tendril_kl_weight', 1.0),
             'tendril_cond_keys': tendril_cond_keys,
             'tendril_cond_dims': tendril_cond_dims,
+            # VFAE-style invariance penalty (Strategy 17). 0 weights → no penalty.
+            'tendril_invariance_plate_weight': getattr(self.config, 'tendril_invariance_plate_weight', 0.0),
+            'tendril_invariance_hsv_weight': getattr(self.config, 'tendril_invariance_hsv_weight', 0.0),
+            'tendril_invariance_pheno_weight': getattr(self.config, 'tendril_invariance_pheno_weight', 0.0),
+            'tendril_invariance_kernel': getattr(self.config, 'tendril_invariance_kernel', 'hsic'),
         }
 
     def _prepare_batch_inputs(
@@ -280,7 +285,7 @@ class StreamlitTrainer:
         strategy = getattr(self.config, 'strategy', 0)
         augment_images = getattr(self.config, 'augment_images', False)
 
-        if strategy not in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16) or not augment_images:
+        if strategy not in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16, 17) or not augment_images:
             return x.to(self.device)
 
         if which == 'train':
@@ -773,7 +778,7 @@ class StreamlitTrainer:
         Returns ``None`` for non-conditional strategies (nothing to vary).
         """
         strategy = getattr(self.config, 'strategy', 0)
-        if strategy not in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16):
+        if strategy not in (9.5, 9.6, 9.7, 9.8, 9.9, 13, 14, 15, 16, 17):
             return None
 
         if self._fixed_spectrum_index is None:
@@ -1231,8 +1236,21 @@ class StreamlitTrainer:
             "message": "Computing skip connections for tendril training...",
         })
 
+        # Strategy 17: collect per-image nuisance when any invariance weight > 0.
+        cfg = self.factory.config
+        invariance_active = any(
+            float(getattr(cfg, k, 0.0) or 0.0) > 0
+            for k in (
+                'tendril_invariance_plate_weight',
+                'tendril_invariance_hsv_weight',
+                'tendril_invariance_pheno_weight',
+            )
+        )
+        if invariance_active:
+            logger.info("Invariance penalty ACTIVE (Strategy 17) — collecting nuisance.")
+
         # Compute skip connections (VAE must stay on GPU for encoder forward passes)
-        skip_logger = SkipLogger(self.vae, self.device)
+        skip_logger = SkipLogger(self.vae, self.device, collect_nuisance=invariance_active)
 
         logger.info("Computing skip connections for training set...")
         skip_logger.compute_skip_connections(self.train_dataloader, 'train')
@@ -1331,6 +1349,11 @@ class StreamlitTrainer:
                 logger.warning(f"  Layer {key} VAL: NEAR-ZERO VARIANCE - skip data may be degenerate!")
         logger.info("=========================================")
 
+        # Nuisance tensors (plate one-hot, HSV, morphology) row-aligned with the
+        # skip tensors — same for every tendril (Strategy 17 invariance penalty).
+        train_nuisance = skip_logger.nuisance.get('train')
+        val_nuisance = skip_logger.nuisance.get('validation')
+
         for key in layer_keys:
             tendrils.add_tendril(
                 str(key),
@@ -1338,6 +1361,8 @@ class StreamlitTrainer:
                 val_skips[key],
                 train_cond=train_cond,
                 validation_cond=val_cond,
+                train_nuisance=train_nuisance,
+                validation_nuisance=val_nuisance,
             )
 
         # Train each tendril with progress callback
