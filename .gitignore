@@ -97,3 +97,4 @@ _candescence_runs/
 
 # Isolated legacy mmdet env for Varasana/Grace detectors
 .venv-legacy/
+results/

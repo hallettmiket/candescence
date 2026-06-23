@@ -2784,7 +2784,9 @@ def _square_latent_figure(coords, metadata_df, color_mode, color_data, color_map
     return fig
 
 
-def _tlv_capture_click(fig, key: str, space_name: Optional[str] = None) -> None:
+def _tlv_capture_click(
+    fig, key: str, space_name: Optional[str] = None, width: str = 'content'
+) -> None:
     """Render one latent-space plot and handle its selection.
 
     A single-point click sets ``clicked_idx`` (the one shared selection index).
@@ -2792,14 +2794,18 @@ def _tlv_capture_click(fig, key: str, space_name: Optional[str] = None) -> None:
     indices + the space it came from) that the Sprite Map below can mosaic — so
     the user can draw a portion of the embedding and sprite just that part.
     Use the plot toolbar's Box Select / Lasso Select tool to drag a region.
+
+    ``width`` is forwarded to ``st.plotly_chart`` ('content' for the square
+    multi-space tiles, 'stretch' for full-width plots such as the corrected
+    layout).
     """
     try:
         event = st.plotly_chart(
-            fig, width='content', on_select="rerun",
+            fig, width=width, on_select="rerun",
             selection_mode=["points", "box", "lasso"], key=key,
         )
     except (TypeError, AttributeError):
-        st.plotly_chart(fig, width='content')
+        st.plotly_chart(fig, width=width)
         return
 
     points = None
@@ -7763,17 +7769,29 @@ def _render_nuisance_correction():
         coords = st.session_state.all_coords_2d.get(sel)
         if coords is not None and color_by in metadata_df.columns:
             dfp = pd.DataFrame({'x': coords[:, 0], 'y': coords[:, 1]})
+            # Carry the global row index so a box/lasso selection maps back to the
+            # correct rows even when a categorical colour splits the scatter into
+            # multiple Plotly traces (point_index would otherwise be per-trace).
+            dfp['__gidx'] = np.arange(len(coords))
             is_cat_color = color_by in cat_cols
             dfp[color_by] = (metadata_df[color_by].astype(str).values if is_cat_color
                              else pd.to_numeric(metadata_df[color_by], errors='coerce').values)
             fig = px.scatter(
-                dfp, x='x', y='y', color=color_by,
+                dfp, x='x', y='y', color=color_by, custom_data=['__gidx'],
                 title=f"{entry['label']} (removed {', '.join(entry['num'] + entry['cat']) or '—'})",
                 color_continuous_scale=None if is_cat_color else 'Viridis',
             )
             fig.update_traces(marker=dict(size=4, opacity=0.6))
             fig.update_layout(height=520, margin=dict(l=10, r=10, t=40, b=10))
-            st.plotly_chart(fig, width='stretch')
+            st.caption(
+                "Use the plot toolbar's **Box Select** or **Lasso Select** to drag "
+                "an area, then open the **Sprite Map** section below and tick "
+                "**Restrict to selected region** on this space's tab to mosaic only "
+                "those images."
+            )
+            _tlv_capture_click(
+                fig, key="nc_corrected_scatter", space_name=sel, width='stretch'
+            )
 
         # Download.
         import io
