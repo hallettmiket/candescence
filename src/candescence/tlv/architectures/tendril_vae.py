@@ -124,9 +124,11 @@ class Encoder(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        cond: torch.Tensor
+        cond: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, List[torch.Tensor]]:
-        """Forward pass through encoder."""
+        """Forward pass through encoder. ``cond`` defaults to ``None`` for the
+        unconditional (de-FiLMed) tendril path; FiLM is identity when
+        ``cond_dim == 0``."""
         x1, x2, x3, x4 = self.forward_conv(x, cond)
 
         x4_flat = torch.flatten(x4, start_dim=1)
@@ -205,9 +207,10 @@ class Decoder(nn.Module):
         self,
         z: torch.Tensor,
         skip_connections: List[torch.Tensor],
-        cond: torch.Tensor
+        cond: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """Forward pass through decoder."""
+        """Forward pass through decoder. ``cond`` defaults to ``None`` for the
+        unconditional (de-FiLMed) tendril path."""
         skip1, skip2, skip3, skip4 = skip_connections
 
         # Project latent to bottleneck
@@ -289,7 +292,7 @@ class tendril_VAE(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        cond: Union[torch.Tensor, List[torch.Tensor]]
+        cond: Union[torch.Tensor, List[torch.Tensor], None] = None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[torch.Tensor]]:
         """
         Forward pass through Tendril VAE.

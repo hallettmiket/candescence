@@ -78,6 +78,14 @@ class FiLM(nn.Module):
         torch.Tensor
             Modulated feature maps of same shape as input
         """
+        # De-FiLMed mode: when there is no conditioning vector (cond_dim == 0)
+        # FiLM is a no-op. Returning ``x`` unchanged is the correct identity
+        # here -- a zero-width ``nn.Linear`` would emit only its (zero-init)
+        # bias, which would otherwise scale/shift the feature map by zero and
+        # annihilate the signal. ``cond`` may be ``None`` in this mode.
+        if self.cond_dim == 0:
+            return x
+
         # Compute scale and shift from conditioning
         # Shape: [batch, feature_dim] -> [batch, feature_dim, 1, 1]
         gamma = self.gamma_layer(cond).unsqueeze(-1).unsqueeze(-1)
